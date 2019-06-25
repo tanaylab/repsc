@@ -2,6 +2,8 @@ curateGenes <- function(genes,
                         tes = NULL,
                         extend = 0)
 {
+  message ('Curating gene intervals')
+  
   # modify duplicated gene names
   genes_dup <- 
     genes %>% 
@@ -66,12 +68,13 @@ curateGenes <- function(genes,
 }
 
 curateTEs <- function(tes, 
-                      genes, # should be curated
+                      genes = NULL, # should be curated
                       extend_3p = 0,
                       filt_exonic = TRUE,
                       max_e_value = 0.05, 
                       min_size = 25)
 {
+  message ('Curating TE intervals')
   if (class(tes) != 'GRanges') { tes <- as_granges(tes) }
   
   if (!is.null(tes$e_value))
@@ -98,9 +101,6 @@ curateTEs <- function(tes,
     tes_unnest %>% 
     filter(width >= min_size)
     
-  message ("Extending TE intervals at 3'")
-  tes_3p  <- flank3prime(tes_unnest_filt, genes, extend = extend_3p)  
-  
   message ('Labeling modified intervals')
   # add column to indicate if interval was modified or not
   tes_unnest_filt <-
@@ -123,7 +123,10 @@ curateTEs <- function(tes,
   if (!identical(tes_unnest_filt_df$start, start(tes_unnest_filt))) { stop ('data.table conversion changed ordering of rows') }
     
   # mark TEs within exons
-  tes_unnest_filt <- tes_unnest_filt %>% mutate(exonic = 1:length(.) %in% from(findOverlaps(., genes)))
+  if (!is.null(genes))
+  {
+    tes_unnest_filt <- tes_unnest_filt %>% mutate(exonic = 1:length(.) %in% from(findOverlaps(., genes)))
+  }
 
   if (filt_exonic)
   {

@@ -1,4 +1,4 @@
-importBAM <- function(bam_files, 
+importBAM <- function(bam_df, 
                       bai_pos = 'suffix', 
                       paired = NULL, 
                       mate = NA,
@@ -6,10 +6,13 @@ importBAM <- function(bam_files,
                       filt = TRUE,
                       barcode = 'CB')
 {
+  bam_files <- as.character(bam_df$paths)
+  paired    <- bam_df$paired
+  mate      <- as.character(bam_df$mate)
+  barcode   <- as.character(bam_df$barcode)
+  
   if (sum(dirname(bam_files) == '.') > 0) { stop ('Please provide full path to files') }
   if (is.null(paired))                    { paired <- unique(Rsamtools::testPairedEndBam(bam_files)) }
-  if (length(paired) > 1)                 { stop ('Paired status must be logical of length 1') }
-  if (!paired)                            { mate <- NA }
    
   # get matching indicies
   if (bai_pos == 'suffix')
@@ -22,7 +25,9 @@ importBAM <- function(bam_files,
   # actual reading function
   readBamF <- function(bam_file,
                        bam_index,
-                       barcode = 'CB')
+                       paired,
+                       barcode, 
+                       mate)
   {
     message(glue("Reading {bam_file}"))
     if (barcode == 'CB')
@@ -55,11 +60,10 @@ importBAM <- function(bam_files,
   
   # import in parallel
   message ('Importing BAM file(s)')
-  if (barcode == 'CB') { barcode <- rep('CB', length(bam_files)) }
   results <- list()
   for (i in 1:length(bam_files))
   {
-    results[[i]] <- future({ readBamF(bam_files[i], bam_indices[i], barcode = barcode[i]) })
+    results[[i]] <- future({ readBamF(bam_files[i], bam_indices[i], barcode = barcode[i], paired = paired[i], mate = mate[i]) })
   }
   reads <- unlist(as(lapply(results, value), 'GRangesList'))
   message ('Done')

@@ -1,31 +1,35 @@
 compAlignments <- function(tes, 
-                           BSgenome,
-                           max_gap = 0.95, 
-                           n_jobs = 500,
-                           outdir = NULL,     
-                           overwrite = FALSE)
+                           BSgenome    = NULL,
+                           max_gap     = 0.95, 
+                           n_jobs      = 500,
+                           outdir      = NULL,
+                           settings_df = NULL,
+                           overwrite   = FALSE)
 {
-  if (is.null(tes$name)) { stop ('No name column found in TE data.frame') }
+  if (is.null(tes$name))    { stop ('No name column found in TE data.frame') }
   if (is.null(outdir))      { stop ('Please specificy directory to save MSA files to') }
   
   # add sequence to TE intervals
   tes <- addSeq(BSgenome, tes)
   
   # calc mafft settings based on estimated alignment complexity
-  message ('Calculating settings for multiple sequence alignments')
-  settings_df <- 
-    data.table(bps = width(tes$seqs), 
-               name = tes$name)[, .(score = max(bps) / 2 * .N), by = 'name'] %>%
-      mutate(perc_r     = percent_rank(score),
-             group      = cut(perc_r, breaks = c(0, 0.5, 0.75, 0.95, 1.01), include.lowest = TRUE, labels = FALSE),
-             threads    = c(1, 1, 1, 5)[group],
-             fft        = c(TRUE, TRUE, TRUE, FALSE)[group],
-             parttree   = c(FALSE, FALSE, TRUE, TRUE)[group],
-             local      = c(TRUE, FALSE, FALSE, FALSE)[group],
-             maxiterate = c(1000, 1000, 0, 0)[group],
-             retree     = c(2, 2, 1, 0)[group]) %>%
-      arrange(-perc_r)
-    
+  if (is.null(settings_df))
+  {
+    message ('Calculating settings for multiple sequence alignments')
+    settings_df <- 
+      data.table(bps = width(tes$seqs), 
+                 name = tes$name)[, .(score = max(bps) / 2 * .N), by = 'name'] %>%
+        mutate(perc_r     = percent_rank(score),
+               group      = cut(perc_r, breaks = c(0, 0.5, 0.75, 0.95, 1.01), include.lowest = TRUE, labels = FALSE),
+               threads    = c(1, 1, 1, 5)[group],
+               fft        = c(TRUE, TRUE, TRUE, FALSE)[group],
+               parttree   = c(FALSE, FALSE, TRUE, TRUE)[group],
+               local      = c(TRUE, FALSE, FALSE, FALSE)[group],
+               maxiterate = c(1000, 1000, 0, 0)[group],
+               retree     = c(2, 2, 1, 0)[group]) %>%
+        arrange(-perc_r)
+  } 
+   
   # commands for mafft alignment and conversion
   cmds <- list()
   for (fam in settings_df$name)
@@ -64,17 +68,9 @@ compAlignments <- function(tes,
   
   res <- rbindlist(lapply(res_gclust, function(x) x$retv), use.names = FALSE, fill = FALSE, idcol = NULL)
 
+  # export results
   write_fst(res, paste0(outdir, BSgenome@provider_version, '_conv_df.fst'))
-  
-  # merge conversion df and te intervals
-  #tes_dt      <- as.data.table(tes %>% select(-seqs))
-  #tes_aligned <- merge(tes_dt, res_comb, by = 'id_unique', all.x = TRUE)
-  
-  # make GRanges
-  #tes_aligned_gr <- as_granges(tes_aligned)
-  
-  # add te id as list name
-  #names(tes_aligned_gr$conversion) <- tes_aligned_gr$id_unique
+  write.cvs(settings_df, paste0(outdir, BSgenome@provider_version, 'mafft_settings.csv'), quote = FALSE)
   
   return(res)
 }
@@ -83,7 +79,7 @@ compAlignments <- function(tes,
 compCounts <- function(reads, 
                        tes,
                        genes,
-                       bin_size = 20,
+                       bin_size = 25,
                        sense_only = FALSE,
                        conversion = NULL,
                        protocol = 'fiveprime')
@@ -113,24 +109,23 @@ compCounts <- function(reads,
   intervals_filt <- subsetByOverlaps(intervals, reads)
   
   # join reads by intervals
-  hits   <- matchReads(intervals_filt, reads, sense_only = sens_only)
+  hits   <- matchReads(intervals_filt, reads, sense_only = sense_only)
   
   message ('Mapping read position on consensus') # check 0/1 based accuracy!
-  if (!is.null(conversion)) 
+  if (is.null(conversion)) 
   {
-    # with conversion df
-    pos_conv_df <- rbindlist(intervals_filt$conversion, idcol = 'id_unique')
-    hits        <- merge(hits, pos_conv_df, all.x = TRUE, by = c('id_unique', 'pos'))
-  } else {
     # using rmsk alignment (crude)
     hits[, ':=' (dist_start = pos, dist_end = width - pos)]
     hits[which(dist_start <= dist_end), pos_con := as.numeric(position_start + dist_start)]
     hits[which(dist_start >  dist_end), pos_con := as.numeric(position_end   - dist_end)]
     hits[which(pos_con > position_end | pos_con < position_start), pos_con := NA] 
+  } else {
+    # with conversion df
+    hits_gene <- hits[which(type == 'gene'), ][, pos_con := pos]
+    hits_te   <- hits[which(type == 'te'), ]
+    hits_te   <- merge(hits_te, conversion, all.x = TRUE, by = c('id_unique', 'pos', 'name'))
+    hits      <- rbind(hits_gene, hits_te)
   }
-    
-  # comp copy-number of consensus pos
-  #cpn_df <- cpn(intervals)
   
   # add reads downstream TE if 3' protocol
   if (protocol == 'threeprime')
@@ -153,112 +148,94 @@ compCounts <- function(reads,
     hits <- hits[, pos_con := cut(pos_con, breaks = seq(-1e6, 1e6, by = bin_size), include.lowest = TRUE)]
   }
     
-	message ('Creating single-cell count matrix')
+	message ('Computing single-cell counts')
   # count how often interval occurs for given barcode (alternative might be to count unique and multi seperately)
   counts_long <- hits[,.(n = sum(NH_weight)), by = c('barcode', 'id_unique', 'NH_flag', 'pos_con', 'name', 'type', 'sense')]
   counts_wide <- dcast.data.table(counts_long, barcode + id_unique + name + type + pos_con + sense ~ NH_flag, value.var = 'n', fill = 0, sep = '_')
   res <- counts_wide[, .(id_unique, barcode, n = unique, n_all = unique + multi, pos_con, name, type, sense)]
 
-  # add intervals to counts
-  #intv_counts <- counts_wide[as.data.table(intervals_filt), nomatch = 0, on = 'id_unique']
-  
-  # add cpn and consize to counts
-  #res <- merge(intv_counts, cpn_df, all.x = TRUE)
-
 	return(res)
 }
 
-callCells <- function(counts,
+callCells <- function(scSet,
                       method = 'emptyDrops',
                       lower  = 100,
                       niters = 10000,
                       fdr    = 0.01)
 {
-  smat <- dbutils::tidyToSparse(counts[which(type == 'gene'), c('name', 'barcode', 'n')])
+  counts      <- scSet@counts
+  counts_gene <- counts[which(type == 'gene'), ]
+  
+  smat <- dbutils::tidyToSparse(counts_gene[, c('name', 'barcode', 'n')])
   
   stats <- 
     DropletUtils::emptyDrops(smat, lower = lower, niters = niters, test.ambient=FALSE,
-      ignore=NULL, alpha=NULL, BPPARAM=BiocParallel::SerialParam())
+      ignore=NULL, alpha=NULL, BPPARAM = BiocParallel::SerialParam())
 
-  counts_filt <- counts[which(barcode %in% rownames(stats)[which(stats$FDR < fdr)]), ]
+  scSet@counts <- counts[which(barcode %in% rownames(stats)[which(stats$FDR < fdr)]), ]
   
-  return(counts_filt)
+  return(scSet)
 }                      
 
-callPeaks <- function(counts, 
-                      tes,
+callPeaks <- function(scSet, 
                       background_correction = TRUE,
-                      bin_size = 20,
-                      smoothed = FALSE, 
+                      neighb_bins = 5,
+                      offset = 2,
                       min_umis = 10,
                       min_loci = 1,
                       enrichment = 1.5,
-                      reg = 1)
+                      summarize = TRUE)
 {
-  # get TE copynumber
-  cpn_df <- cpn(tes)
+  bin_size <- scSet@bin_size
+  counts   <- scSet@counts
+  cpn_df   <- scSet@cpn
+  #tes    <- scSet@tes
   
   # aggregate counts across cells and TE loci
   counts_aggr <- aggr(counts)
   
+  # calc density
   dens_df <- 
-    merge(counts_aggr, cpn_df, all = TRUE)[which(is.na(bps)), bps := 20
+    merge(counts_aggr, cpn_df, all = TRUE, by = c('name', 'pos_con'))[which(is.na(bps)), bps := bin_size
       ][which(is.na(n_tot)), n_tot := 0
-        ][, dens := n_tot / bps]
+        ][, dens := n_tot / bps
+          ][which(!is.na(pos_con)),
+            ][order(name, pos_con), ]
   
+  # create neighbouring bin vector
+  offset_v <- c((-neighb_bins - offset):-offset, offset:(neighb_bins + offset))
   
+  # calc neighbouring signal
+  n_tot_cols <- paste0('n_tot', offset_v)
+  bps_cols   <- paste0('bps', offset_v)
+  neighb_signal <- 
+    dens_df[, c(n_tot_cols, bps_cols) := c(shift(n_tot, n = offset_v, type = 'lead'), shift(bps, n = offset_v, type = 'lead')), by = 'name']
+   
+  # calc neighbouring dens
+  dens_df$dens_neighb <- 
+    rowSums(neighb_signal[, n_tot_cols, with = FALSE], na.rm = TRUE) /
+    rowSums(neighb_signal[, bps_cols, with = FALSE], na.rm = TRUE)
+	
+  # clean df
+  dens_df <- dens_df[, !c(n_tot_cols, bps_cols), with = FALSE]
   
+  # calc fc
+  dens_df[, fc := dens / dens_neighb]
   
+  # plot
+  dens_df %>% mutate(fc = dens / dens_neighb) %>%  ggplot(aes(dens, fc, col = type)) + geom_point(size = 0.2, alpha = 0.25) + scale_x_log10() + ylim(0, 100)
   
-  peaks = dens_df %>% 
-		group_by(name) %>%
-			mutate(a = lag(dens, n = 5, default = NA),
-				   b = lag(dens, n = 4, default = NA), 
-				   c = lag(dens, n = 3, default = NA),
-				   d = lag(dens, n = 2, default = NA),
-				   e = lead(dens, n = 2, default = NA),
-				   f = lead(dens, n = 3, default = NA),
-				   g = lead(dens, n = 4, default = NA),
-				   h = lead(dens, n = 5, default = NA)) %>% 
-		    ungroup %>%
-			select(name, bin_id, a,b,c,d,e,f,g,h) %>% 
-			gather(offset, 'norm_umis', a,b,c,d,e,f,g,h) %>%
-			group_by(name, bin_id) %>% 
-				summarise(neighbouring_umis_mean = mean(norm_umis, na.rm = TRUE)) %>% 
-			ungroup %>%
-			left_join(bin_stats_norm, .) %>%
-			mutate(fc = norm_umis / neighbouring_umis_mean)
-			
-	peak_sig = peaks %>% rowwise %>% mutate(p.value = ppois(q = norm_umis, lambda = neighbouring_umis_mean, lower.tail = FALSE, log = FALSE)) %>%
-		ungroup %>% mutate(q.value = p.adjust(p.value, 'fdr'))
-										  
-	tss = peak_sig %>% mutate(tss = umis >= 20 & fc > 3 & q.value < 0.01)
+  # add peak columns
+  counts_peaks <- 
+    merge(counts, 
+          dens_df[, peak := n_tot >= 10 & fc >= 10][which(peak), c('name', 'pos_con', 'peak')], 
+          all.x = TRUE, 
+          by = c('name', 'pos_con'))[which(is.na(peak)), peak := FALSE]
   
-  
-  
-  
-  if (!is.null(counts$peak)) { stop ('Counts already contain peaks') }
-  if (exclude_exons) { counts <- counts[which(!exonic), ] }
-  
-  dens_fg <- aggr(counts, sorted = TRUE)
-  dens_bg <- data.table(name = tes$name, dens_bg = tes$dens_bg)[, .(dens_bg = mean(dens_bg, na.rm = TRUE)), by = 'name']
-  
-  dens_df <- merge(dens_fg, dens_bg, by = 'name')
-  
-  # calc stats
-  stats <- # calcs rollstats and accounts for left/right boundaries
-    dens_df[which(!is.na(pos_con)), 
-            c('dens_bin_left', 'dens_bin_center', 'dens_bin_right', 'n_bin') := list(frollmean(dens, n = bin_size, align = 'left', algo = 'exact'), 
-                                                                                     frollmean(dens, n = bin_size, align = 'center', algo = 'exact'),
-                                                                                     frollmean(dens, n = bin_size, align = 'right', algo = 'exact'),
-                                                                                     zoo::rollsum(n_tot, k = bin_size, fill = 'extend')), 
-            by = 'name'][, dens_bin := ifelse(is.na(dens_bin_center), na.omit(dens_bin_left, dens_bin_right), dens_bin_center)]
-  stats <- stats[, fc := dens_bin / min(dens_bin), by = 'name'] # + min(dens_bin)
-  
-  peaks <- stats[which(fc >= enrichment & n_bin >= min_umis & n_loci >= min_loci), .(peak = TRUE), by = c('name', 'pos_con')]
-  
-  res <- merge(counts, peaks, all.x = TRUE)[which(is.na(peak)), peak := FALSE]
-  
+  if (summarize)
+  {
+    res <- counts_peaks[, .(n = sum(n), n_all = sum(n_all)), by = c('barcode', 'id_unique', 'peak', 'sense', 'type')]
+  }
   return(res)
 }
 
@@ -275,32 +252,35 @@ compTELoad <- function(counts)
   return(res)
 }
 
-normCounts <- function(counts,
+normCounts <- function(scSet,
                        N = 20000,
-                       separate = FALSE,
-                       long = TRUE)
+                       separate = FALSE)
 {
-  coutns <- as.data.table(counts)
+  counts <- scSet@counts
+  seed   <- scSet@seed
+  set.seed(seed)
   
   if (separate) 
   {
-    # divide n by total number of reads per cell
-    counts_frac <- counts[, n_norm := n / sum(n), by = 'barcode']
+    counts_frac <- counts[, n_prob := n / sum(n), by = c('barcode', 'type')]
   } else {
-    counts_frac <- counts[, n_norm := n / sum(n), by = c('barcode', 'type')]
+    # divide n by total number of reads per cell
+    counts_frac <- counts[, n_prob := n / sum(n), by = 'barcode']
   }
   
   # get integer counts based on weighted sampling
   counts_sampled <- 
-    counts_frac[, .(id_unique = sample(id_unique, prob = n_norm, replace = TRUE, size = N)), by = 'barcode'
+    counts_frac[, .(id_unique = sample(id_unique, prob = n_prob, replace = TRUE, size = N)), by = 'barcode'
       ][, .(n_norm = .N), by = c('id_unique', 'barcode')]
   
   # add to input counts
-  if (!long)
-  {
-    smat <- dbutils::tidyToSparse(counts_sampled)
-    return(smat)
-  } else {
-    return(counts_sampled)
-  }
+  # if (!long)
+  # {
+    # res <- dbutils::tidyToSparse(counts_sampled)
+    
+  # } else {
+    scSet@counts <- merge(counts, counts_sampled, all.x = TRUE, by = c('id_unique', 'barcode'))[which(is.na(n_norm)), n_norm := 0]
+  # }
+  
+  return(scSet)
 }                      

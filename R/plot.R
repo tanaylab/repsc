@@ -1,3 +1,18 @@
+plotCellSize <- function(scSet)
+{
+  counts <- scSet@counts
+  
+  cell_size <- counts[, .(n_tot = sum(n)), by = c('barcode', 'type')]
+  
+  p <-
+    cell_size %>% 
+      ggplot(aes(n_tot, fill = type)) + 
+        geom_histogram(bins = 75, alpha = 0.5, position = 'identity') + 
+        scale_x_log10()
+        
+  return(p)
+}
+
 plotCPN <- function(tes,
                     name = NULL)
 {
@@ -7,15 +22,34 @@ plotCPN <- function(tes,
   cpn_df %>%
     ggplot(aes(pos_con, bps)) +
       geom_bar(stat = 'identity')
-}                  
+}   
 
-plotTECov <- function(counts, 
-                      tes, 
+plotEnr <- function(scSet)
+{
+  counts <- scSet@counts
+  
+  ggdata <- 
+    counts[, .(enr = sum(n)), by = c('barcode', 'peak', 'type')] %>% 
+      spread(peak, enr, fill = 0, sep = '_') %>% 
+      as_tibble %>%
+      mutate(perc_peak = peak_TRUE / (peak_FALSE + peak_TRUE) * 100)
+  
+  p <-
+    ggdata %>%
+      ggplot(aes(perc_peak, fill = type)) +
+        geom_histogram(bins = 75, position = 'identity', alpha = 0.25)
+  
+  return(p)
+}               
+
+plotTECov <- function(scSet, 
                       pattern = NULL,
                       center = TRUE,
                       min_expr = 10)
 {
+  counts    <- scSet@coutns
   counts_te <- counts[which(type == 'te'),] 
+  tes       <- scSet@tes
   
   if (!is.null(pattern))
   {
@@ -63,10 +97,12 @@ plotTECov <- function(counts,
             panel.grid.major = element_blank())
 }
 
-plotGeneCov <- function(counts,
-                        top_n = 100,
-                        max_size = 1000)
+plotGeneCov <- function(scSet,
+                        highest_n = 2500)
 {
+  protocol <- scSet@protocol
+  counts   <- scSet@counts
+  
   counts_gene <- counts[which(type == 'gene'), ]
   
   ggdata <- 
@@ -78,19 +114,72 @@ plotGeneCov <- function(counts,
     ggdata %>% 
     select(name, gene_tot) %>% 
     distinct %>% 
-    top_n(top_n, gene_tot) %>% 
+    top_n(highest_n, gene_tot) %>% 
     pull(name)
   
-  ggdata %>%
-    filter(name %in% top_genes) %>%
-    ggplot(aes(pos_con, name, fill = log10(tot))) +
-      geom_raster() +
-      #xlim(0, max_size) +
-      scale_fill_distiller(palette = 'Spectral') +
-      theme(axis.text        = element_blank(),
-            axis.ticks       = element_blank(),
-            axis.title       = element_blank(),
-            panel.background = element_blank())
+  
+  if (protocol == 'fiveprime' | protocol == 'threeprime')
+  {
+    # scale UMIs per gene
+    ggdata[, maxi := tot == max(tot), by = 'name']
+    ggdata[, tot_scaled := tot / tot[maxi][1], by = 'name']
+    
+    # center on max bin
+    ggdata[, pos_con_cent := as.numeric(pos_con) - as.numeric(pos_con[maxi][1]), by = 'name']
+  }
+  
+  p <- 
+    ggdata %>%
+      filter(name %in% top_genes) %>%
+      ggplot(aes(pos_con_cent, name, fill = log10(tot))) +
+        geom_raster() +
+        xlim(-100, 100) +
+        scale_fill_distiller(palette = 'Spectral') +
+        theme(axis.text        = element_blank(),
+              axis.ticks       = element_blank(),
+              axis.title       = element_blank(),
+              panel.background = element_blank())
+}
+
+plotMitoRibo <- function(scSet)
+{
+  ribo_prefixes <- c('Human' = '^RP[LS]', 'Mouse' = '^Rp[ls]') 
+  genes         <- scSet@genes
+  organism      <- scSet@genome@common_name
+  counts_gene   <- scSet@counts[which(type == 'gene'), ]
+  ribo_prefix   <- ribo_prefixes[organism]
+  
+  mt_genes <- 
+    genes %>%
+      filter(gene_type %in% c('Mt_tRNA', 'Mt_rRNA')) %>%
+      as_tibble %>%
+      pull(gene_name) %>%
+      unique
+      
+  ribo_genes <-
+    genes %>%
+      filter(grepl(ribo_prefix, gene_name)) %>%
+      as_tibble %>%
+      pull(gene_name) %>%
+      unique
+   
+  # tag mito/ribo genes
+  counts_gene <- 
+    counts_gene[, ':=' (mito = name %in% mt_genes, ribo = name %in% ribo_genes)]
+  
+  # summarize percentage  
+  counts_aggr <-
+    counts_gene[, .(n_tot = sum(n), n_ribo = sum(n[ribo]), n_mito = sum(n[mito])), by = c('barcode')
+      ][, .(perc_ribo = n_ribo / n_tot * 100, perc_mito = n_mito / n_tot * 100)]
+  
+  p <- 
+    counts_aggr %>% 
+      ggplot(aes(perc_ribo, perc_mito)) + 
+        geom_point(size = 0.25) + 
+        scale_y_log10() + 
+        scale_x_log10()
+  
+  return(p)
 }
 
 plotMSA <- function(msa, 
@@ -154,18 +243,75 @@ plotMSA <- function(msa,
   }
 }
 
-plotPercUnique <- function(counts)
+plotPercUnique <- function(scSet,
+                           type = c('cells', 'family'))
 {
-  counts_te <- counts[which(type == 'te'), ]
+  counts <- scSet@counts
   
-  ggdata <- counts_te[, .(tot = sum(n_all), perc = sum(n) / sum(n_all) * 100), by = 'name']
+  if (type == 'cells')
+  {
+    ggdata <- counts[, .(n = sum(n), n_all = sum(n_all)), by = 'barcode'][, perc_unique := n / n_all * 100]
+    p <-
+      ggdata %>%
+        ggplot(aes(perc_unique)) + 
+          geom_histogram(bins = 75)
+  }
+  
+  if (type == 'family')
+  {
+    counts_te <- counts[which(type == 'te'), ]
+    ggdata <- counts_te[, .(tot = sum(n_all), perc = sum(n) / sum(n_all) * 100), by = 'name']
+   
+    p <- 
+      ggdata %>%
+        mutate(label = ifelse(perc < 50, name, '')) %>%
+      ggplot(aes(tot, perc, label = label)) + 
+        geom_point(size = 0.25) + 
+        scale_x_log10() #+
+        #ggrepel::geom_text_repel()
+  }
 
-  p <- 
-    ggdata %>%
-      mutate(label = ifelse(perc < 50, name, '')) %>%
-    ggplot(aes(tot, perc, label = label)) + 
-      geom_point() + 
-      scale_x_log10() +
-      ggrepel::geom_text_repel()
+  return(p)
+}
+
+plotTELoad <- function(scSet)
+{
+  counts <- scSet@counts
+  
+  te_load <- compTELoad(counts)
+  
+  p <-
+    te_load %>%
+      ggplot(aes(te_load)) +
+        geom_histogram(bins = 75) +
+        scale_x_log10()
+        
+  return(p)
+}
+
+plotQC <- function(counts,
+                   genes,
+                   tes)
+{
+  counts_gene <- counts[which(type == 'gene'), ]
+  counts_gene$repclass <- NA
+  counts_te   <- counts[which(type == 'te'), ]
+  counts_te   <- merge(counts_te, unique(as.data.table(tes)[, c('name', 'repclass')]), by = 'name')
+  counts      <- rbindlist(list(counts_gene, counts_te))
+  
+  
+  p_size          <- plotCellSize(scSet)
+  p_load          <- plotTELoad(scSet)
+  p_mitoribo      <- plotMitoRibo(scSet)
+  p_unique_cells  <- plotPercUnique(scSet, type = 'cells')
+  p_unique_fams   <- plotPercUnique(scSet, type = 'family')
+  p_gene_cov      <- plotGeneCov(scSet)
+  p_te_cov        <- plotTECov(counts)
+  
+  cowplot::plot_grid(p_size, 
+                     p_load, 
+                     p_unique_cells, 
+                     p_gene_cov,
+                     p_unique_fams)
 
 }

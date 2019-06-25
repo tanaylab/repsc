@@ -202,9 +202,7 @@ flank3prime <- function(tes,
                         genes, # should be curated
                         extend = 500)
 {
-  conv <- tes$conversion
-  tes <- tes %>% select(-which(colnames(mcols(tes)) %in% 'conversion'))
-  
+  # message ("Extending TE intervals at 3'")
   intv_blackl <- c(granges(tes, use.mcols = FALSE), unique(granges(genes, use.mcols = FALSE)))
   
   # get downstream feature index
@@ -330,10 +328,7 @@ matchReads <- function(intervals,
                        reads,
                        sense_only = FALSE)
 {
-  # filter irrelevant metadata columns
-  intervals <- intervals %>% select(-matches('conversion'))
-  
-  # modify read columns 
+ # modify read columns 
   reads <- reads %>% mutate(start_read = start, strand_read = strand)
   
   hits    <- join_overlap_inner(intervals, reads) %>% mutate(sense = strand == strand_read) 
@@ -346,15 +341,21 @@ matchReads <- function(intervals,
   return(res)
 }
 
-cpn <- function(tes, 
-                bin_size = 20,
-                n_chunks = 5)
+cpn <- function(scSet, 
+                conv_df  = NULL,
+                n_chunks = 5,
+                bin_size = 25)
 {
-  # calc chunking steps
-  chunks <- chunk(tes, n_chunks = n_chunks)
+  message ('Calculating genomic TE copy-number')
+  bin_size <- scSet@bin_size
   
-  if (class(tes) == 'GRanges')
+  if (is.null(conv_df))
   {
+    tes <- scSet@tes
+ 
+    # calc chunking steps
+    chunks <- chunk(tes, n_chunks = n_chunks)
+
     tes_dt <- as.data.table(tes)[, al_length := position_end - position_start]
     tes_dt <- tes_dt[, al_length := ifelse(is.na(al_length), width, al_length)] # width of interval for NA alignments
     
@@ -387,9 +388,9 @@ cpn <- function(tes,
         ][, .(bps = sum(cpn)), by = c('name', 'pos_con')]
         
     res <- merge(distinct(cpn_univ_df), cpn_df, all.x = TRUE)[which(is.na(bps)), bps := 0]
-  }    
+  }
   
-  if (FALSE)
+  if (!is.null(conv_df))
   {
     # calc cpn on chunks because of size (parallel)
     cpn_list <- 

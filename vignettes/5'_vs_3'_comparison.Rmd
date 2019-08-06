@@ -1,0 +1,162 @@
+---
+title: "Repsc vignette"
+author: "David Brocks"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Repsc}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+# Workflow human 10x scRNA-seq dataset (5')
+In this tutorial, we are going to utilize 5' scRNA-seq data on epigenetically de-repressed cancer cell lines to quantify transposable element (TE) expression levels at single-cell and locus resolution. Following the workflow, you'll learn the specifics of Repsc to adapt it to your single-cell dataset.
+
+
+## Getting started
+
+We start the workflow by loading Repsc and the human hg38 _BSgenome_ object into our R environment:
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+Sys.time()
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repsc/')
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Reputils/')
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repdata/')
+
+library(BSgenome.Hsapiens.UCSC.hg38)
+```
+
+## Create scSet
+
+We then import our gene and TE annotation files as [GRanges objects](https://bioconductor.org/packages/release/bioc/vignettes/GenomicRanges/inst/doc/GenomicRangesIntroduction.html) followed by Repsc-specific curation and formatting using the `curateGenes` and `curateTEs` functions.
+```{r, eval = FALSE, echo = TRUE, warning = FALSE}
+# path to Gencode gtf file (provided)
+# gene_path <- system.file(package = 'Repdata', 
+#                        'extdata', 
+#                        'gencode.v29.annotation.gtf.gz')
+gene_path <- '~/davidbr/tools/cellranger/references/refdata-cellranger-GRCh38-1.2.0/genes/genes.gtf'
+
+
+# path to RepeatMasker hg38 repeat annotation (provided)
+rmsk_path <- system.file(package = 'Repdata', 
+                         'extdata', 
+                         'hg38.fa.out.gz')
+                         
+# creating the scSet
+sc <- createScSet(genome   = Hsapiens,
+                  protocol = 'threeprime',
+                  tes      = rmsk_path,
+                  genes    = gene_path)
+```
+
+## Compute count matrix
+
+After we have imported and curated the data, we can procede to generate the actual read/UMI count matrix using the `compCounts` function.
+ 
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+# path to bam files containing mapped reads                         
+bam_paths <-  c(
+                dir('/net/mraid14/export/data/users/davidbr/proj/epitherapy/data/hct116/10x/dmso/aligned/chunked_bams', 
+                  pattern = '_deduplicated_chr[0-9, X, Y, MT]+.bam', 
+                  full.names = TRUE),
+                dir('/net/mraid14/export/data/users/davidbr/proj/epitherapy/data/hct116/10x/parental/aligned/chunked_bams', 
+                  pattern = '_deduplicated_chr[0-9, X, Y, MT]+.bam', 
+                  full.names = TRUE)
+                )
+
+hdf5_paths <- c(
+                '/net/mraid14/export/data/users/davidbr/proj/epitherapy/data/hct116/10x/dmso/hct116_DMSO/outs/filtered_gene_bc_matrices_h5.h5',
+                '/net/mraid14/export/data/users/davidbr/proj/epitherapy/data/hct116/10x/parental/hct116_PAR/outs/filtered_gene_bc_matrices_h5.h5'
+                )             
+
+# create a data.frame specifying import parameters                 
+bam_df    <- data.frame(paths   = bam_paths,
+                        paired  = rep(c(TRUE, FALSE), each = 25),       # use FALSE for single-end libraries
+                        mate    = rep(c('first', NA), each = 25),    # only imports the first mate of properly aligned read pairs, set to NA when using single-end libraries
+                        barcode = 'CB',       # 10x barcode included in BAM flag
+                        chunk   = 1:50,
+                        hdf5    = rep(hdf5_paths, each = 25),
+                        meta    = rep(c('fivep', 'threep'), each = 25),
+                        stringsAsFactors = FALSE)
+                        
+head(bam_df)                      
+```
+
+```{r, eval = FALSE, echo = TRUE, warning = FALSE}
+# compute single-cell counts
+sc <- addCounts(sc,
+                bams         = bam_df,
+                bin_size     = 25,
+                msa_dir      = NULL,
+                use_gcluster = TRUE)
+
+plotCells(sc)                
+```
+
+## Resolve TE/Gene ambiguity
+
+```{r, eval = FALSE, echo = TRUE, warning = FALSE}
+sc <- resolveAmbiguity(sc)
+```
+
+## Call TSSs
+```{r, eval = FALSE}
+sc <- callPeaks(sc, 
+                neighb_bins = 10,
+                offset      = 4,
+                min_expr    = 10,
+                fdr         = 0.01)
+```
+
+## Call gene/TE stats
+```{r, eval = FALSE}
+sc <- addStats(sc,
+               min_expr = 10,
+               min_norm_var = 0.5)
+```     
+
+## Compare global counts
+```{r, eval = FALSE}
+counts      <- Repsc::counts(sc)
+counts_aggr <- 
+  counts[, .(n = sum(n_all, na.rm = TRUE), n_uniq = sum(n)), by = c('name', 'barcode')
+    ][, n := round(n)
+      ][which(n_uniq > n), n := n_uniq]
+
+counts_ds   <- Reputils::downsamp(counts_aggr, full = FALSE, i = 'name')
+counts_ds   <- merge(counts_ds, unique(counts[, c('name', 'barcode', 'meta', 'type')]), all.x = TRUE)
+
+summarized <-
+  counts_ds[, .(n = sum(n_ds)), by = c('name', 'type', 'meta')] 
+
+p_glob_comp <-
+  summarized %>%
+    tidyr::spread(meta, n, fill = 0) %>% 
+    ggplot(aes(fivep, threep)) + 
+      geom_point(size = 0.1) + 
+      scale_x_log10() + 
+      scale_y_log10() + 
+      facet_wrap(~type)
+      
+p_ltr12c_cov <-
+  counts[which(name %in% c('LTR12C', 'AluY', 'MER51', 'L1PA2', 'LTR13', 'THE1B', 'LTR7')), .(n = sum(n_all)), by = c('meta', 'pos_con', 'name')][which(meta == 'threep'), n := n * -1] %>% 
+    ggplot(aes(pos_con, n)) + 
+      geom_bar(stat = 'identity') + 
+      facet_wrap(~name, scales = 'free')
+  
+
+
+```
+
+
+          
+# References
+[1]   
+
+# Session information
+```{r}
+sessionInfo()
+```          

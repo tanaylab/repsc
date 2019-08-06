@@ -1,0 +1,38 @@
+---
+title: "Repsc vignette"
+author: "David Brocks"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Repsc}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+# Prerequisites
+
+## Genome assembly (optional)
+Repsc can compute family-wise multiple sequence alignments of all repeat sequences in the genome to improve read mapping onto a consensus model. To do so, we require the genome assembly of our organism of choice stored as a _BSgenome_ object. You can retrieve the full list of supported genomes by typing `BSgenome::available.genomes()` or create a custom _BSgenome_ object following the [instructions](https://www.bioconductor.org/packages//2.7/bioc/vignettes/BSgenome/inst/doc/BSgenomeForge.pdf). 
+
+Since we are working with expression data from human cancer cell lines and mouse embryos, we will first install the UCSC hg38 and mm10 assemblies.
+```{r, eval = FALSE}
+BiocManager::install("BSgenome.Hsapiens.UCSC.hg38")
+BiocManager::install("BSgenome.Mmusculus.UCSC.mm10")
+```
+__Important__ __note__: Do not use __repeat-masked__ _BSgenome_ objects (contain 'masked' suffix, e.g. _BSgenome.Hsapiens.UCSC.hg38.masked_)!
+
+## MAFFT multiple alignment program (optional)
+To compute family-wise multiple sequence alignments (used to improve mapping of read/UMI signal along consensus TE models), Repsc utilizes the [MAFFT multiple alignment program](https://mafft.cbrc.jp/alignment/software/). To use this feature, make sure mafft is in your command PATH.
+
+## Repeat annotation (required)
+A convient solution is to download transposon coordinates from the [Repeatmasker homepage](http://www.repeatmasker.org/genomicDatasets/RMGenomicDatasets.html) or the [DFAM database](http://www.dfam.org/releases/Dfam_3.0/annotations/) for your genome and assembly of choice. You can import the Repeatmasker _fa.out.gz_ or DFAM _dfam.hits.gz_ files using the Repsc `importRMSK` and `importDFAM` functions, respectively. Another option is to provide custom annotation as long as it provides the basic information about chromosome, start, end, strand, repname (family identifier), and id_unique (unique locus identifier). In this tutorial, we will show you how to import such information using the provided example datasets. 
+
+## Gene model annotation (required)
+In addition to TE expression counts, Repsc also quantifies genic expression levels using common gene interval and annotation formats (e.g. gtf). In this tutorial, we will use the [Gencode](https://www.gencodegenes.org/) comprehensive gene annotation on the human reference chromosomes only. Other annotation ressources are currently untested and should be used with caution.
+
+## Read/UMI genomic coordinates (required)
+Repsc requires read alignment coordinates stored in [BAM format](http://samtools.github.io/hts-specs/SAMv1.pdf) as input, which are routinely generated during most common scRNA-seq workflows, including [10x' Cellranger pipeline](https://support.10xgenomics.com/single-cell-gene-expression/software/pipelines/latest/what-is-cell-ranger). BAM inputs should be duplicate removed, position sorted, and indexed. Chunking BAM inputs (e.g. by chromosome) can accelerate the import into your R environment using the `importBAM` function. __Important:__ Repsc assumes the cell barcode is either stored as CB tag or BAM input files are seperated per cell. Other formats are currently not supported (e.g. cell barcode in read name).

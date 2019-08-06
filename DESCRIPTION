@@ -1,8 +1,8 @@
 Package: Repsc
-Title: What the Package Does (one line, title case)
+Title: Single-cell expression analysis of transposable elements
 Version: 0.0.0.9000
-Authors@R: person("First", "Last", email = "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
+Authors@R: person("David", "Brocks", email = "david.brocks@weizmann.ac.il", role = c("aut", "cre"))
+Description: Single-cell expression analysis of transposable elements
 Depends: R (>= 3.5.1)
 License: What license is it under?
 Encoding: UTF-8
@@ -11,6 +11,7 @@ Imports:
   ape,
   Biostrings,
   BSgenome,
+  cowplot,
   DECIPHER,
   data.table,
   doFuture,
@@ -31,6 +32,7 @@ Imports:
   rtracklayer,
   S4Vectors,
   stringr,
+  treemapify,
   tibble,
   tidyr
 RoxygenNote: 6.1.1
@@ -41,3 +43,18 @@ Suggests:
     rmarkdown,
     testthat
 VignetteBuilder: knitr
+Collate: 
+    'scSet.R'
+    'accessors.R'
+    'add.R'
+    'annotate.R'
+    'compute.R'
+    'curate.R'
+    'export.R'
+    'filter_select.R'
+    'package-Repsc.R'
+    'plot.R'
+    'transform.R'
+    'utilities.R'
+    'wrapper.R'
+    'zzz.R'

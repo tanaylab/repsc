@@ -65,10 +65,22 @@ addSeq <- function(BSgenome,
   return(intervals)
 }
 
-aggr <- function(counts, sorted = FALSE)
+aggr <- function(counts, 
+                 min_expr = 0,
+                 sorted = FALSE)
 {
+  if (is.null(counts$peak))
+  {
+    counts$peak <- FALSE
+  }
+  
   res <- 
-    counts[, .(n_tot = sum(n_all)), by = c('name', 'pos_con', 'type')]
+    counts[, .(n_tot = sum(n_all), n_tot_uniq = sum(n)), by = c('name', 'pos_con', 'type', 'peak')]
+  
+  expressed <- res[, .(n_tot = sum(n_tot)), by = 'name'][which(n_tot >= min_expr), ]$name
+  
+  res <- res[which(name %in% expressed), ]
+  return(res)
   
   #create df for all con pos
   # full_con <- unnest(counts[, .(pos_con = list(1:(con_size[1])), repclass = repclass[1]), by = 'name'])
@@ -198,12 +210,52 @@ countOverlapsWeighted <- function(gr1, gr2)
   return(gr1)
 }
 
+data_summary <- function(x) {
+   m <- median(x)
+   ymin <- m-sd(x)
+   ymax <- m+sd(x)
+   return(c(y=m,ymin=ymin,ymax=ymax))
+}
+
+translatePeakCoords <- function(scSet)
+{
+  message ('Translating peak coordinates')
+  peak_bins  <- unique(scSet@counts[which(type == 'gene' & peak), c('id_unique', 'name', 'pos_con')])
+  genes      <- scSet@genes
+  genes_expr <- genes[genes$name %in% peak_bins$name]
+  
+  # create 1 bp res exon intervals
+  g_expr_dt <- as.data.table(unlist(tile(genes_expr, width = 1)))
+  
+  # annotate 1 bp intevals with id unique and binned pos con of gene
+  g_expr_anno_dt <-
+    g_expr_dt[, name := rep(genes_expr$name, width(genes_expr))                                   # add id unique to 1 bp intervals
+      ][which(strand == '+'), pos_con := 1:.N, by = 'name'                                             # add pos con for + strand
+        ][which(strand == '-'), pos_con := .N:1, by = 'name'                                           # add pos con for - strand
+          ][, pos_con := cut(pos_con, breaks = seq(-1e6, 1e6, by = scSet@bin_size), include.lowest = TRUE)] # bin pos_con
+  
+  # join peak_bins with bp genomic cooods
+  peak_coords_1bp <- merge(peak_bins, g_expr_anno_dt, by = c('name', 'pos_con'), all.x = TRUE)
+  
+  # reduce bp res peak intervals into genomic coordinate windows
+  peak_coords <- reduce(as_granges(peak_coords_1bp))
+  
+  # add gene anno and only keep unique intervals (in case interval overlaps multiple gene features)
+  res <- unique(join_overlap_left_directed(peak_coords, genes_expr))
+  
+  scSet@peaks <- res
+  return(scSet)
+}
+
 flank3prime <- function(tes, 
                         genes, # should be curated
                         extend = 500)
 {
-  # message ("Extending TE intervals at 3'")
-  intv_blackl <- c(granges(tes, use.mcols = FALSE), unique(granges(genes, use.mcols = FALSE)))
+  message ("Extending TE intervals at 3'")
+  tes    <- tes %>% select(id_unique, name)
+  tes_dt <- as.data.table(tes)
+  genes  <- genes %>% select(id_unique)
+  intv_blackl <- c(tes, genes)
   
   # get downstream feature index
   ds_feat <- precede(tes, intv_blackl)
@@ -215,13 +267,15 @@ flank3prime <- function(tes,
   dists[na_index] <- Inf
   dists[dists > extend] <- extend
   
-  # extend 3' till nearest feature
-  tes_flank <- tes %>% flank_downstream(width = dists) %>% filter(width != 0)
+  # extend downstream till nearest feature and modify position start and end intervals
+  tes_flank <- 
+    tes_dt[, ':=' (extend = as.integer(dists))
+      ][which(strand == '+'), ':=' (start = as.integer(end + 1), end = as.integer(end + extend), position_start = 1L, position_end = extend),
+        ][which(strand == '-'), ':=' (end = as.integer(start - 1), start = as.integer(start - extend), position_start = extend, position_end = 1L)
+          ][which(start <= end), ]
   
-  # modify position start and end intervals
-  res <- tes_flank %>% mutate(position_start = 0, position_end = width)
-  
-  return(tes_flank)
+  res <- as_granges(tes_flank[, !'width'][, downstream := TRUE])
+  return(res)
 }
 
 mapConMSA <- function(msa, 
@@ -264,133 +318,92 @@ mapConMSA <- function(msa,
   return(res)
 }
 
-mafft = function(sequences, 
-                 ids = NULL,
-                 subgroup = FALSE,
-                 family = 'te', 
-                 save = FALSE, 
-                 outdir = NULL,
-                 threads = -1, # uses all
-                 epsilon = 0.123, 
-                 memsave = FALSE,
-                 fft = TRUE,
-                 overwrite = FALSE,
-                 op = 1.53, # default
-                 parttree = FALSE,
-                 retree = 2,
-                 maxiterate = 0,
-                 long = FALSE,
-                 auto = TRUE,
-                 local = FALSE)
-{
-  # if not outdir saves to Repexpr package
-  if (is.null(outdir)) { outdir <- system.file('extdata', 'msa', package = 'Repexpr') }
-  
-  # create flag vector
-  memsave  <- ifelse(memsave, '--memsave', '--nomemsave')
-  local    <- ifelse(local, '--localpair', '')
-  fft      <- ifelse(fft, '--fft', '--nofft')
-  parttree <- ifelse(parttree, '--parttree', '')
-  
-  flags <- glue("--thread {threads} --ep {epsilon} --op {op} {memsave} {local} {parttree} --maxiterate {maxiterate} {fft}")
-  
-  names(sequences) <- ids
-  
-  input_file <- tempfile()
-  writeXStringSet(DNAStringSet(sequences), input_file, format = 'fasta')
-  	
-  outfile <- paste0(outdir, '/', family, '_msa.fasta')
-
-  if (!file.exists(outfile) | overwrite)
-  {
-    cmd = glue('mafft {flags} {input_file} > {outfile}')
-    message(cmd)
-    
-    system(cmd)
-  } else {
-    message('file exists already')
-  }
-  
-  file.remove(input_file)
-  
-  msa <- importMSA(outfile, long = long)
-  
-  if (!save)
-  {
-    file.remove(outfile)
-  }
-  
-  return(msa)
-}
-
 # join reads by intervals
 matchReads <- function(intervals, 
                        reads,
-                       sense_only = FALSE)
+                       sense_only = FALSE)  # not supported right now
 {
- # modify read columns 
-  reads <- reads %>% mutate(start_read = start, strand_read = strand)
+  # modify read columns 
+  reads[, ':=' (start_read = start)]
   
-  hits    <- join_overlap_inner(intervals, reads) %>% mutate(sense = strand == strand_read) 
-  hits_dt <- as.data.table(hits)
+  # faster than findOverlaps and much faster than join_overlap_inner_directed!
+  foverlaps.DTs <- function(DT.x, DT.y)
+  {
+    setkey(DT.y, seqnames, strand, start, end)
+    res <- foverlaps(DT.x, DT.y, type = "any", which = TRUE, nomatch = 0L)
+    return(res)
+  }
   
-  res <- 
-    hits_dt[which(strand == '+'), pos := start_read - start + 1
-      ][which(strand == '-'), pos := end - start_read + 1]
+  message ('Finding read vs TE/Gene overlaps')
+  hits = foverlaps.DTs(reads, intervals)
+    
+  # join based on overlaps
+  res <- bind_cols(intervals[hits$yid, !c('seqnames', 'width')],
+                   reads[hits$xid, colnames(reads) %in% c('start_read', 'barcode', 'NH', 'meta', 'start_read'), with = FALSE])
   
+  message ('Done')
   return(res)
 }
 
-cpn <- function(scSet, 
-                conv_df  = NULL,
-                n_chunks = 5,
-                bin_size = 25)
+# computes genomic cpn and number of bps per bin for TE and gene intervals
+cpn <- function(scSet,
+                conv_df = NA)
 {
-  message ('Calculating genomic TE copy-number')
-  bin_size <- scSet@bin_size
+  message ('Computing genomic CPN of TE bins')
+  protocol  <- scSet@protocol
+  bin_size  <- scSet@bin_size
+  tes       <- scSet@tes
+  tes_flank <- scSet@tes_3p
+  genes     <- scSet@genes
   
-  if (is.null(conv_df))
+  if (is.na(conv_df))
   {
-    tes <- scSet@tes
- 
-    # calc chunking steps
-    chunks <- chunk(tes, n_chunks = n_chunks)
-
-    tes_dt <- as.data.table(tes)[, al_length := position_end - position_start]
-    tes_dt <- tes_dt[, al_length := ifelse(is.na(al_length), width, al_length)] # width of interval for NA alignments
+    # add downstream flanking regions to TE intvs if 3' protocol was used
+    if (protocol == 'threeprime')
+    {
+      tes          <- # combine original and downstream TE intervals
+        c(
+          select(tes, id_unique, name, position_start, position_end), 
+          tes_flank
+          ) 
+    } else {
+      tes$downstream <- NA
+    }
     
-    # create cpn universe template df (currently doesn't support NA!)
-    cpn_univ_df <- 
-      unique(merge(tes_dt[, .(pos_con = 1:max(position_end, na.rm = TRUE)), by = 'name'],
-                   data.table(pos_con = 1:1e6, con_size_bin = cut(1:1e6, seq(-1e6, 1e6, by = bin_size), include.lowest = TRUE)), 
-                   all.x = TRUE)[, .(name = name, pos_con = con_size_bin)])
+    # combine TE and gene intervals
+    intvs_dt <- 
+      c(
+        select(genes, id_unique, name, position_start, position_end), 
+        tes
+        ) %>% as.data.table
     
-    cpn_list <- 
-      foreach (i = 1:(length(chunks))) %dopar%
-      {
-        # print(i)
-        tes_chunk <- tes_dt[chunks[[i]], ]
+    # filter non-aligned intvs, and adjust alignment start, end for GRanges coverage function (start must be smaller than end)
+    intvs_adj <- 
+      intvs_dt[which(!is.na(position_start)), 
+        ][, position_start_old := position_start
+         ][which(strand == '-'), ':=' (position_start = position_end, position_end = position_start_old)
+          ][, !'position_start_old']
+          
+    # bp genomic cpn per family/gene
+    fam_bp_cpn <- 
+      as.data.table(coverage(as_granges(intvs_adj[which(is.na(downstream)), .(seqnames = name, start = position_start, end = position_end, strand)])))[, .(pos_con = 1:.N, cpn = value), by = 'group_name'][, name := group_name][, !'group_name']
+    
+    # bp genomic cpn per family (flanking region, -1 to indicate downstream) 
+    if (protocol == 'threeprime')
+    {
+      fam_bp_cpn_flank <- 
+        as.data.table(coverage(as_granges(intvs_adj[which(!is.na(downstream)), .(seqnames = name, start = position_start, end = position_end, strand)])))[, .(pos_con = 1:.N, cpn = value), by = 'group_name'][, name := group_name][, !'group_name'][, pos_con := -1 * pos_con]
         
-        # create df with all consensus positions of the genome
-        pos_con_all <-
-          data.table(name = rep.int(tes_chunk$name, tes_chunk$al_length),  
-                     pos_con = sequence(tes_chunk$al_length) + rep.int(tes_chunk$position_start-1, tes_chunk$al_length))
-        
-        # count how often consensus position occurs per name
-        cpn_df <- pos_con_all[, .(cpn = .N), by = c('name', 'pos_con')]
-      }  
-    # combine results and summarize    
-    cpn_df <- rbindlist(cpn_list)[, .(cpn = sum(cpn)), by = c('name', 'pos_con')]
-    
+      fam_bp_cpn <- rbind(fam_bp_cpn, fam_bp_cpn_flank)
+    }
+          
     # bin and summarize counts
-    cpn_df <- 
-      cpn_df[, pos_con := cut(pos_con, breaks = seq(-1e6, 1e6, by = bin_size), include.lowest = TRUE)
-        ][, .(bps = sum(cpn)), by = c('name', 'pos_con')]
-        
-    res <- merge(distinct(cpn_univ_df), cpn_df, all.x = TRUE)[which(is.na(bps)), bps := 0]
+    fam_bin_bps <- 
+      fam_bp_cpn[, pos_con := cut(pos_con, breaks = seq(min(fam_bp_cpn$pos_con) - bin_size, max(fam_bp_cpn$pos_con) + bin_size, by = bin_size), include.lowest = TRUE)
+        ][, .(bps = sum(cpn)), by = c('name', 'pos_con')] 
   }
-  
-  if (!is.null(conv_df))
+      
+  if (!is.na(conv_df))
   {
     # calc cpn on chunks because of size (parallel)
     cpn_list <- 
@@ -425,36 +438,10 @@ cpn <- function(scSet,
     # add con model size
     res <- cpn_all[, con_size := max(abs(pos_con), na.rm = TRUE), by = 'name']
   }
-    
-  return(res)
-}
-
-consensusCov <- function(tes, n_jobs = 75, bin_size = 20)
-{
-  # generate commands    
-  tes <- tes %>% as_tibble %>% mutate(chunks = ntile(seqnames, n_jobs))
   
-  cmds <- list()
-  for (chunk in unique(tes$chunks))
-  {
-    cmds[[chunk]] <- glue("df <- Repexpr:::cpn(tes %>% filter(chunks == {chunk}), bin_size = {bin_size})")
-  }
-  
-  # create new empty env and fill with relevant
-  empty <- new.env(parent = emptyenv())
-  empty$tes <- tes
-  
-  # distribute, compute and combine
-  res <- 
-    gcluster.run3(command_list = cmds,  
-                  packages = c("data.table", "plyranges", "Repexpr", "base", "stats"), 
-                  max.jobs = n_jobs, 
-                  envir = empty, 
-                  io_saturation = FALSE)
-  
-  # combine and summarize
-  res <- rbindlist(lapply(res, function(x) x$retv), use.names = FALSE, fill = FALSE, idcol = NULL)[, .(cpn = sum(cpn)), by = c('name', 'pos_con_bin')]
-
+  # relevel bins so negative is at end
+  res <- .relevel(fam_bin_bps)
+        
   return(res)
 }
 
@@ -636,6 +623,18 @@ mapConPos = function(tes, nested = FALSE, bin_size = 20, n_threads = 1)
   return(res)
 }
 
+# relevels pos con column fact so that negative levels are at the end
+.relevel <- function(df)
+{
+  if (sum(grepl('-', levels(df$pos_con))) > 0)
+  {
+    res <- df[, pos_con := forcats::fct_relevel(pos_con, rev(grep('-', levels(pos_con), fixed = TRUE, value = TRUE)), after = Inf)]
+  } else {
+    res <- df
+  }
+  return(res)
+}
+
 splitBams <- function(bam_files, local = TRUE)
 {
   for (bam_file in bam_files)
@@ -666,214 +665,4 @@ splitBams <- function(bam_files, local = TRUE)
       gpatterns::gcluster.run2(jobs_title='BamByChrom', command_list = cmds, io_saturation = TRUE, max.jobs = 30)
     }
   }
-}
-
-gcluster.run3 <-
-function (..., command_list = NULL, opt.flags = "", envir = NULL, max.jobs = 400,
-    debug = FALSE, R = paste0(R.home(component = "bin"), "/R"),
-    packages = NULL, jobs_title = NULL, job_names = NULL, collapse_results = FALSE,
-    queue = NULL, memory = NULL, threads = NULL, io_saturation = NULL,
-    queue_flag = "-q @{queue}", memory_flag = "-l mem_free=@{memory}G",
-    threads_flag = "-pe threads @{threads}", io_saturation_flag = "-l io_saturation=@{io_saturation}",
-    script = '/home/davidbr/tgdata/src/gpatterns/exec/sgjob.sh')
-{
-    qq <- GetoptLong::qq
-    
-    if (!is.null(command_list)) {
-        commands <- purrr::map(command_list, function(x) parse(text = x))
-    }
-    else {
-        commands <- as.list(substitute(list(...))[-1L])
-    }
-    if (!is.null(queue)) {
-        opt.flags <- paste(opt.flags, qq(queue_flag))
-    }
-    if (!is.null(memory)) {
-        opt.flags <- paste(opt.flags, qq(memory_flag))
-    }
-    if (!is.null(threads)) {
-        opt.flags <- paste(opt.flags, qq(threads_flag))
-    }
-    if (!is.null(io_saturation)) {
-        opt.flags <- paste(opt.flags, qq(io_saturation_flag))
-    }
-    
-    if (length(commands) < 1)
-        stop("Usage: gcluster.run2(..., command_list = NULL, opt.flags = \"\" max.jobs = 400, debug = FALSE)",
-            call. = F)
-    if (!length(system("which qsub", ignore.stderr = T, intern = T)))
-        stop("gcluster.run2 must run on a host that supports Sun Grid Engine (qsub)",
-            call. = F)
-    .gcheckroot()
-    tmp.dirname <- ""
-    submitted.jobs <- c()
-    tryCatch({
-        tmp.dirname <- tempfile(pattern = "", tmpdir = paste(get("GROOT"),
-            "/tmp", sep = ""))
-        if (!dir.create(tmp.dirname, recursive = T, mode = "0777"))
-            stop(sprintf("Failed to create a directory %s", tmp.dirname),
-                call. = F)
-        cat("Preparing for distribution...\n")
-        save(.GLIBDIR, file = paste(tmp.dirname, "libdir", sep = "/"))
-       
-        if (is.null(envir)) {  
-          vars <- ls(all.names = TRUE, envir = parent.frame())
-        
-          envir <- parent.frame()
-          while (!identical(envir, .GlobalEnv)) {
-              envir <- parent.env(envir)
-              if (!isNamespace(envir)) {
-                  vars <- union(vars, ls(all.names = TRUE, envir = envir))
-              }
-          }
-          suppressWarnings(save(list = vars, file = paste(tmp.dirname,
-              "envir", sep = "/"), envir = parent.frame()), compress = FALSE)
-        } else {
-          vars <- ls(all.names = TRUE, envir = envir)
-          message(vars)
-          suppressWarnings(save(list = vars, file = paste(tmp.dirname,
-              "envir", sep = "/"), envir = envir, compress = FALSE))
-        }
-        .GSGECMD <- commands
-        save(.GSGECMD, file = paste(tmp.dirname, "commands",
-            sep = "/"))
-        opts <- options()
-        save(opts, file = paste(tmp.dirname, "opts", sep = "/"))
-        if (!is.null(packages)) {
-            .GPACKAGES <- as.list(packages)
-        }
-        else {
-            .GPACKAGES <- as.list(.packages())
-        }
-        save(.GPACKAGES, file = paste(tmp.dirname, "packages",
-            sep = "/"))
-        cat("Running the commands...\n")
-        completed.jobs <- c()
-        progress <- -1
-        repeat {
-            num.running.jobs <- length(submitted.jobs) - length(completed.jobs)
-            if (length(submitted.jobs) < length(commands) &&
-                num.running.jobs < max.jobs) {
-                istart <- length(submitted.jobs) + 1
-                iend <- min(length(commands), istart + (max.jobs -
-                  num.running.jobs) - 1)
-                for (i in istart:iend) {
-                  out.file <- sprintf("%s/%d.out", tmp.dirname,
-                    i)
-                  err.file <- sprintf("%s/%d.err", tmp.dirname,
-                    i)
-                  if (!is.null(job_names)) {
-                    job.name <- job_names[i]
-                  }
-                  else if (!is.null(jobs_title)) {
-                    job.name <- sprintf("%s_%s", jobs_title,
-                      i)
-                  }
-                  else {
-                    job.name <- sprintf("sgjob_%s", i)
-                  }
-                  command <- sprintf("qsub -terse -cwd -S /bin/bash -N %s -o %s -e %s -V %s %s %d '%s' '%s'",
-                    job.name, out.file, err.file, opt.flags,
-                    script, i, tmp.dirname, R)
-                  jobid <- system(command, intern = TRUE)
-                  if (length(jobid) != 1)
-                    stop("Failed to run qsub", call. = FALSE)
-                  if (debug)
-                    cat(sprintf("\tSubmitted job %d (id: %s)\n",
-                      i, jobid))
-                  submitted.jobs <- c(submitted.jobs, jobid)
-                }
-            }
-            Sys.sleep(3)
-            running.jobs <- .gcluster.running.jobs(submitted.jobs)
-            old.completed.jobs <- completed.jobs
-            completed.jobs <- setdiff(submitted.jobs, running.jobs)
-            if (debug) {
-                delta.jobs <- setdiff(completed.jobs, old.completed.jobs)
-                if (length(delta.jobs) > 0) {
-                  for (jobid in delta.jobs) cat(sprintf("\tJob %d (id: %s) completed\n",
-                    match(jobid, submitted.jobs), jobid))
-                }
-                if (!length(running.jobs) && length(submitted.jobs) ==
-                  length(commands))
-                  break
-                new.progress <- length(completed.jobs)
-                if (new.progress != progress) {
-                  progress <- new.progress
-                  cat(sprintf("\t%d job(s) still in progress\n",
-                    length(commands) - progress))
-                }
-            }
-            else {
-                if (!length(running.jobs) && length(submitted.jobs) ==
-                  length(commands))
-                  break
-                new.progress <- as.integer(100 * length(completed.jobs)/length(commands))
-                if (new.progress != progress) {
-                  progress <- new.progress
-                  cat(sprintf("%d%%...", progress))
-                }
-                else cat(".")
-            }
-        }
-        if (!debug && progress != -1 && progress != 100)
-            cat("100%\n")
-    }, interrupt = function(interrupt) {
-        cat("\n")
-        stop("Command interrupted!", call. = FALSE)
-    }, finally = {
-        if (length(submitted.jobs) > 0) {
-            running.jobs <- .gcluster.running.jobs(submitted.jobs)
-            answer <- c()
-            for (i in 1:length(commands)) {
-                res <- list()
-                res$exit.status <- NA
-                res$retv <- NA
-                res$stdout <- NA
-                res$stderr <- NA
-                if (submitted.jobs[i] %in% running.jobs)
-                  res$exit.status <- "interrupted"
-                else {
-                  fname <- sprintf("%s/%d.retv", tmp.dirname,
-                    i)
-                  if (file.exists(fname)) {
-                    fst::read_fst(fname)
-                    res$exit.status <- "success"
-                    res$retv <- retv
-                  }
-                  else res$exit.status <- "failure"
-                }
-                out.file <- sprintf("%s/%d.out", tmp.dirname,
-                  i)
-                if (file.exists(out.file)) {
-                  f <- file(out.file, "rc")
-                  res$stdout <- readChar(f, 1e+06)
-                  close(f)
-                }
-                err.file <- sprintf("%s/%d.err", tmp.dirname,
-                  i)
-                if (file.exists(err.file)) {
-                  f <- file(err.file, "rc")
-                  res$stderr <- readChar(f, 1e+06)
-                  close(f)
-                }
-                answer[[i]] <- res
-            }
-            for (job in running.jobs) system(sprintf("qdel %s",
-                job), ignore.stderr = T, intern = T)
-            unlink(tmp.dirname, recursive = TRUE)
-            if (collapse_results) {
-                canswer <- tryCatch(data.table::rbindlist(lapply(answer, function(x) x$retv), use.names = FALSE, fill = FALSE, idcol = NULL),
-                  error = function(e) {
-                    message("returning original output due to an error. collapse your reults manually (are all the parts data frames?)")
-                    return(NULL)
-                  })
-                if (!is.null(canswer)) {
-                  return(canswer)
-                }
-            }
-            return(answer)
-        }
-        unlink(tmp.dirname, recursive = TRUE)
-    })
 }

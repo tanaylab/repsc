@@ -21,16 +21,29 @@ addAlignments <- function(scSet,
 }
 
 addCounts <- function(scSet,
-                      reads    = NULL,
-                      chunk    = FALSE,
+                      bams     = NULL,
                       msa_dir  = NULL,
-                      bin_size = 25)
+                      bin_size = 25,
+                      use_gcluster = FALSE)
 {
   bin_size       <- as.integer(bin_size)
   scSet@bin_size <- bin_size
   tes            <- scSet@tes
+  tes_3p         <- scSet@tes_3p
   genes          <- scSet@genes
   protocol       <- scSet@protocol
+  
+  # test if input files exist
+  if (sum(file.exists(bams$paths)) != nrow(bams)) { stop (bams$paths[file.exists(bams_paths)], 'does not exist') }
+  if (!is.null(bams$hdf5))
+  {
+    if (sum(file.exists(bams$hdf5)) != nrow(bams)) { stop (bams$paths[file.exists(bams_paths)], 'does not exist') }
+  }
+  
+  # overwrite downstream results
+  scSet@cstats  <- data.frame()
+  scSet@pstats  <- data.frame()
+  scSet@gstats  <- data.frame()
   
   if (!is.null(msa_dir))
   {
@@ -38,28 +51,86 @@ addCounts <- function(scSet,
     conv_df <- fst::read_fst(paste0(msa_dir, '/', scSet@genome@provider_version, '_conv_df.fst'), as.data.table = TRUE)
     message ('Done')
   } else {
-    conv_df <- NULL
+    conv_df <- NA
   }
-  
-  if (!chunk)
-  {
-    # import reads
-    reads <- importBAM(reads, anchor = protocol)
     
-    #' Count number of reads per interval and cell barcode
-    counts <- 
-      compCounts(reads, 
+  #' Count number of reads per interval and cell barcode
+  if (use_gcluster)
+  {
+    cmds <- list()
+    for (i in unique(bams$chunk))
+    {
+      cmds[[as.character(i)]] <- 
+        glue("Repsc:::compCounts(bams = bams[bams$chunk == {i}, ],
+                                 tes,
+                                 tes_3p,
+                                 genes,
+                                 bin_size     = {bin_size},
+                                 conversion   = {conv_df},
+                                 protocol     = '{protocol}',
+                                 use_gcluster = FALSE)")
+    }
+    # create new empty env and fill with relevant
+    empty <- new.env(parent = emptyenv())
+    empty$bams   <- bams
+    empty$tes    <- tes
+    empty$tes_3p <- tes_3p
+    empty$genes  <- genes
+    
+    # distribute, compute and combine
+    res <- 
+      Reputils:::gcluster.run3(command_list = cmds,  
+                    packages = c("data.table", "plyranges", "base", "stats"), 
+                    max.jobs = 50, 
+                    envir = empty, 
+                    io_saturation = FALSE)
+    
+    res <- rbindlist(lapply(res, function(x) x$retv))
+  } else {
+    res <- 
+      compCounts(bams, 
                  tes,
+                 tes_3p,
                  genes,
                  bin_size   = bin_size,
-                 sense_only = FALSE,
+                 sense_only = TRUE,
                  conversion = conv_df,
                  protocol   = protocol)
   }
+  # summarize results in case of dumb chunking
+  counts <- res[, .(n = sum(n), n_all = sum(n_all)), by = c('barcode', 'name', 'id_unique', 'pos_con', 'type', 'meta')]
   
-  # add cpn df
-  scSet@cpn      <- cpn(scSet, bin_size = bin_size)
+  # import 10x gene counts if defined
+  if (!is.null(bams$hdf5))
+  {
+    message ('Importing 10x gene counts from hdf5 file(s)')
+    # make hdf5 files unique
+    bams <- unique(bams[, colnames(bams) %in% c('hdf5', 'meta')])
+    
+    # import counts as list and name according to meta
+    counts_10x_l <- lapply(bams$hdf5, import10x)
+    names(counts_10x_l) <- bams$meta
+    
+    # unlist and format
+    counts_10x_dt <-
+      rbindlist(counts_10x_l, idcol = 'meta')[, ':=' (pos_con = NA, id_unique = name, type = 'gene', n_all = NA, barcode = paste(barcode, meta, sep = '|'))]
+  
+    # combine with TE counts
+    counts <- rbindlist(list(counts, counts_10x_dt), use.names = TRUE)
+  
+    # mark valid barcodes based on 10x
+    valid_cells <- unique(counts_10x_dt$barcode)
+    counts      <- counts[, is_cell := barcode %in% valid_cells][which(is_cell), ]
+    scSet@cells <- valid_cells  
+  }
+  
   scSet@counts   <- counts
+  scSet@cpn      <- cpn(scSet)
   
+  # add class annotation
+  scSet <- annoClass(scSet)
+  
+  scSet@cstats   <- cstats(scSet) # needs class annotation!
+    
   return(scSet)
 }

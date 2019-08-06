@@ -10,16 +10,22 @@ knitr::opts_chunk$set(
 )
 ```
 
-# Repsc <img src="man/figures/logo.png" align="right" alt="" width="120" />
+# Repsc <img src="docs/reference/figures/logo.png" align="right" alt="" width="120" />
 
 The Repsc R package is a _beta_ development version to facilitate expression analysis of transposable elements at single-cell resolution.
+
 ### Functionality
 
-The basic workflow consists importing genome annotation/sequencing reads, computing the count matrix, and QC of the results.
+The basic workflow consists of importing genome annotation/sequencing reads, curating TE and gene intervals, counting overlaps, and generating the single-cell matrix. Repsc supports a wide range of protocols, including 5'/3' and full-coverage based methods, but for unambiguous assignment of reads to de-repressed TE loci we recommend 5' based protocols:
+
+```{r pressure, echo = FALSE, out.width = '90%', fig.align='center'}
+knitr::include_graphics('docs/reference/figures/read_cov_by_protocol.png')
+```
  
 #### Features include:
  * Multi-species support
  * Flexible genome annotation
+ * Gene and TE curation
  * 5'/3'/full-coverage support
  * High-quality reports
  

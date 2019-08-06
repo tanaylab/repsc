@@ -4,7 +4,8 @@
 \alias{compCounts}
 \title{Counts number of reads per interval and cell barcode}
 \usage{
-compCounts(reads, tes, genes, bin_size = 20, protocol = "fiveprime")
+compCounts(bams, tes, tes_3p, genes, bin_size = 25, sense_only = TRUE,
+  conversion = NULL, protocol = "fiveprime", use_gcluster = FALSE)
 }
 \description{
 Counts number of reads per interval and cell barcode

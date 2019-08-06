@@ -1,8 +1,7 @@
 .onLoad <- function(libname, pkgname) {
-  devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/dbutils/')
   doMC::registerDoMC(60)
   doFuture:: registerDoFuture()
-  future::plan(future::multiprocess)
+  future::plan(future::multiprocess(workers = future::availableCores()))
   
   ggplot2::theme_set(ggplot2::theme_light() %+replace% 
                      theme(panel.background = element_blank(), 

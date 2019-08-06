@@ -41,6 +41,15 @@ repnames <- function(scSet,
   return(families)
 }
 
+#' Returns TE intervals from scSet
+#' @export
+setGeneric("counts", function(scSet) standardGeneric("counts"))
+setMethod("counts", signature("scSet"), function(scSet) {
+  out   <- scSet@counts
+
+  return(out)
+})
+
 #' Returns gene intervals from scSet
 #' @export
 setGeneric("genes", function(scSet) standardGeneric("genes"))

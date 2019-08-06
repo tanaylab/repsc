@@ -26,11 +26,20 @@ scSet <-
                                  genome     = 'BSgenome',
                                  protocol   = 'character', 
                                  tes        = 'GRanges',
-                                 tes3p      = 'GRanges',
+                                 tes_3p      = 'GRanges',
+                                 mdata      = 'data.frame',
                                  genes      = 'GRanges',
+                                 tss        = 'GRanges',
                                  cpn        = 'data.frame',
+                                 cells      = 'character',
+                                 peaks      = 'GRanges',
+                                 cstats     = 'data.frame',
+                                 gstats     = 'data.frame',
+                                 pstats     = 'data.frame',
                                  msa_dir    = 'character',
+                                 ds         = 'integer',
                                  counts     = 'data.frame',
+                                 counts_ds  = 'data.frame',
                                  bin_size   = 'integer',
                                  plots      = 'list', 
                                  alignments = 'DNAStringSetList',
@@ -63,12 +72,14 @@ setMethod(
       
       # Import 
       genes     <- rtracklayer::import(genes)
-      tes       <- importRMSK(tes)
+      GenomeInfoDb::seqlevelsStyle(genes) <- 'UCSC'
+      tes       <- Reputils::importRMSK(tes)
+      tss       <- Reputils::getTSS(genes) %>% select(gene_name)
       
       # Curate
-      genes_cur <- curateGenes(genes)        # only retains exons, resolves naming ambiguity
-      tes_cur   <- curateTEs(tes,            # tries to resolve nested TE intervals and adds annotation
-                             genes_cur) 
+      genes_cur <- Reputils::curateGenes(genes)        # only retains exons, resolves naming ambiguity
+      tes_cur   <- Reputils::curateTEs(tes,            # tries to resolve nested TE intervals and adds annotation
+                                       genes_cur) 
       if (protocol == 'threeprime')
       {
         tes_3p  <- flank3prime(tes_cur, genes_cur, extend = 500) 
@@ -90,8 +101,10 @@ setMethod(
       .Object@genome      <- genome
       .Object@protocol    <- protocol
       .Object@tes         <- tes_cur
-      .Object@tes3p       <- tes_3p
+      .Object@tes_3p       <- tes_3p
       .Object@genes       <- genes_cur
+      .Object@tss         <- tss
+      .Object@ds          <- 1000L
       .Object@plots       <- list()
       .Object@n_cores     <- n_cores  
       .Object@seed        <- seed
@@ -105,11 +118,13 @@ setMethod("show", "scSet", function(object)
 { 
   genome_id  <- object@genome@pkgname
   #n_barcodes <- object@counts$barcode
+  #n_cells    <- object@n_cells
   n_tes      <- length(object@tes)
   n_fams     <- length(unique(object@tes$name))
   n_plots    <- length(object@plots)
   n_cores    <- object@n_cores
   
+  #message(glue::glue('scSet with {n_cells} cells'))
   message(glue::glue('scSet object of {genome_id}'))
   message(glue::glue('with {n_tes} loci from {n_fams} families'))
   message(glue::glue('with {n_plots} QC plots'))

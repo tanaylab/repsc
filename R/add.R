@@ -20,6 +20,12 @@ addAlignments <- function(scSet,
                  settings_df = NULL)
 }
 
+#' Adds single-cell TE and genic counts 
+#'
+#' @param bams data.frame. Input data.frame specifying paths to mandatory bam files and reading specifics (e.g. paired status, mate, anchoring) and optional hdf5 files, as well as optional metadata. See example below for further details.
+#' @param bin_size Integer. Basepair bin size to group reads/UMIs on TE consensus/gene models. Default is 25 bps.
+#' @param use_gcluster Boolean. Use gcluster.run function to distribute jobs across HPC nodes. Requires misha package. If FALSE (the default), users can distribute jobs using the future infrastructure.
+#' @export
 addCounts <- function(scSet,
                       bams     = NULL,
                       msa_dir  = NULL,
@@ -27,7 +33,6 @@ addCounts <- function(scSet,
                       use_gcluster = FALSE)
 {
   bin_size       <- as.integer(bin_size)
-  scSet@bin_size <- bin_size
   tes            <- scSet@tes
   tes_3p         <- scSet@tes_3p
   genes          <- scSet@genes

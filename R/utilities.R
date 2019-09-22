@@ -71,32 +71,19 @@ aggr <- function(counts,
 {
   if (is.null(counts$peak))
   {
-    counts$peak <- FALSE
+    counts[, peak := FALSE]
   }
   
   res <- 
-    counts[, .(n_tot = sum(n_all), n_tot_uniq = sum(n)), by = c('name', 'pos_con', 'type', 'peak')]
+    counts[, .(n_tot = sum(n_all, na.rm = TRUE), n_tot_uniq = sum(n)), by = c('name', 'pos_con', 'type', 'peak')]
   
-  expressed <- res[, .(n_tot = sum(n_tot)), by = 'name'][which(n_tot >= min_expr), ]$name
+  if (min_expr > 0)
+  {
+    expressed <- res[, .(n_tot = sum(n_tot)), by = 'name'][which(n_tot >= min_expr), ]$name
+    res <- res[which(name %in% expressed), ]
+  }
   
-  res <- res[which(name %in% expressed), ]
   return(res)
-  
-  #create df for all con pos
-  # full_con <- unnest(counts[, .(pos_con = list(1:(con_size[1])), repclass = repclass[1]), by = 'name'])
-  
-  #aggregate counts (why unique)
-  # dens_df <- counts[, .(n_tot = sum(n_all), cpn = cpn[1], dens = sum(n_all) / cpn[1], n_loci = length(unique(id_unique))), by = c('name', 'pos_con')]
-  
-  #join
-  # dens_full <- merge(full_con, dens_df, all = TRUE)[which(is.na(dens)), ':=' (dens = 0, n_tot = 0, n_loci = 0)]
-  
-  # if (sorted)
-  # {
-    # dens_full <- dens_full[order(name, pos_con), ]
-  # }
-  
-  # return(dens_full)
 }
 
 #' Genes should be curated!
@@ -171,6 +158,36 @@ calcBackground <- function(BSgenome = Hsapiens,
   return(tes)
 }   
 
+clustLouvain <- function(mat, k) {
+  message ('Running Louvain community detection')
+  
+  # create data structure to be used distances between all neighbors nodes
+  knn <- FNN::get.knn(as.matrix(mat), k = k)
+
+
+  # Create dataframe where each record (row) represents an edge between two neighbors and has a weight = 1/(distance+1)
+  #i.e: short distance --> high weight
+  knn2 <- data.frame(from = rep(1:nrow(knn$nn.index), k), to = as.vector(knn$nn.index), weight = 1/(1 + as.vector(knn$nn.dist)))
+
+
+  #creat graph from data frame (this graph is directional weighted)
+  nw <- igraph::graph_from_data_frame(knn2, directed = FALSE, vertices = NULL)
+  
+
+  nw <- igraph::simplify(nw)
+
+
+  lc <- igraph::cluster_louvain(nw)
+
+
+  clusters <- igraph::membership(lc)
+  
+  res <- data.table(id_unique = rownames(mat), module = as.integer(clusters))
+  
+  message (max(clusters), ' communities found')
+  return (res)
+}
+
 clustSeqs <- function(seqs, 
                       kmer_length = 3,
                       cut_height = 500)
@@ -184,17 +201,6 @@ clustSeqs <- function(seqs,
   ct <- cutree(hc, h = cut_height)
   
   return(ct) 
-}
-
-chunk <- function(vect, n_chunks = NULL, chunk_size = 1e4)
-{
-  if (!is.null(n_chunks)) 
-  {
-    chunk_size <- floor(length(vect) / n_chunks)
-  }
-  
-  chunks <- split(1:length(vect), ceiling(seq_along(1:length(vect)) / chunk_size))
-  return(chunks)
 }
 
 countOverlapsWeighted <- function(gr1, gr2)
@@ -349,99 +355,107 @@ matchReads <- function(intervals,
 cpn <- function(scSet,
                 conv_df = NA)
 {
-  message ('Computing genomic CPN of TE bins')
   protocol  <- scSet@protocol
-  bin_size  <- scSet@bin_size
+  bin_size  <- scSet@params$addCounts$bin_size
   tes       <- scSet@tes
   tes_flank <- scSet@tes_3p
   genes     <- scSet@genes
   
-  if (is.na(conv_df))
+  if (!is.na(bin_size))
   {
-    # add downstream flanking regions to TE intvs if 3' protocol was used
-    if (protocol == 'threeprime')
+    message ('Computing genomic CPN of TE bins')
+    if (is.na(conv_df))
     {
-      tes          <- # combine original and downstream TE intervals
-        c(
-          select(tes, id_unique, name, position_start, position_end), 
-          tes_flank
-          ) 
-    } else {
-      tes$downstream <- NA
-    }
-    
-    # combine TE and gene intervals
-    intvs_dt <- 
-      c(
-        select(genes, id_unique, name, position_start, position_end), 
-        tes
-        ) %>% as.data.table
-    
-    # filter non-aligned intvs, and adjust alignment start, end for GRanges coverage function (start must be smaller than end)
-    intvs_adj <- 
-      intvs_dt[which(!is.na(position_start)), 
-        ][, position_start_old := position_start
-         ][which(strand == '-'), ':=' (position_start = position_end, position_end = position_start_old)
-          ][, !'position_start_old']
-          
-    # bp genomic cpn per family/gene
-    fam_bp_cpn <- 
-      as.data.table(coverage(as_granges(intvs_adj[which(is.na(downstream)), .(seqnames = name, start = position_start, end = position_end, strand)])))[, .(pos_con = 1:.N, cpn = value), by = 'group_name'][, name := group_name][, !'group_name']
-    
-    # bp genomic cpn per family (flanking region, -1 to indicate downstream) 
-    if (protocol == 'threeprime')
-    {
-      fam_bp_cpn_flank <- 
-        as.data.table(coverage(as_granges(intvs_adj[which(!is.na(downstream)), .(seqnames = name, start = position_start, end = position_end, strand)])))[, .(pos_con = 1:.N, cpn = value), by = 'group_name'][, name := group_name][, !'group_name'][, pos_con := -1 * pos_con]
-        
-      fam_bp_cpn <- rbind(fam_bp_cpn, fam_bp_cpn_flank)
-    }
-          
-    # bin and summarize counts
-    fam_bin_bps <- 
-      fam_bp_cpn[, pos_con := cut(pos_con, breaks = seq(min(fam_bp_cpn$pos_con) - bin_size, max(fam_bp_cpn$pos_con) + bin_size, by = bin_size), include.lowest = TRUE)
-        ][, .(bps = sum(cpn)), by = c('name', 'pos_con')] 
-  }
-      
-  if (!is.na(conv_df))
-  {
-    # calc cpn on chunks because of size (parallel)
-    cpn_list <- 
-      foreach (i = 1:(length(chunks))) %dopar%
+      # add downstream flanking regions to TE intvs if 3' protocol was used
+      if (protocol == 'threeprime')
       {
-        # print(i)
-        tes_chunk <- tes[chunks[[i]]]
-        
-        if (is.null(tes_subs$conversion)) # if conversion df missing, assumes 3' extension or rmsk alignments
-        {
-          chunk <- as.data.table(tes_subs)[, .(pos_con = position_start:position_end), by = c('name', 'id_unique')]
-        } else {
-          chunk <- rbindlist(tes_subs$conversion, idcol = 'name')
-        }
-        
-        res_chunk <- chunk[, .(cpn = .N), by = c('name', 'pos_con')] 
-        
-        return(res_chunk)
+        tes          <- # combine original and downstream TE intervals
+          c(
+            select(tes, id_unique, name, position_start, position_end), 
+            tes_flank
+            ) 
+      } else {
+        tes$downstream <- NA
       }
-    
-    # combine and sum cpn per family (chunking split families sometimes) and add consensus model size
-    cpn_df <- rbindlist(cpn_list)[, .(cpn = sum(cpn)), by = c('name', 'pos_con')]
-    
-    # add NA cpn counts (NA counts are wrong for rsmk alignment based estimates)
-    fam_tot_bps <- data.table(name = tes$name, bps = width(tes))[, .(bps = sum(bps)), by = 'name']
-    fam_con_bps <- cpn_df[, .(bps_con = sum(cpn)), by = 'name']
-    cpn_na <- merge(fam_tot_bps, fam_con_bps, by = 'name')[, .(pos_con =  NA, cpn = bps - bps_con), by = 'name']
-    
-    # combine na and con cpn dfs
-    cpn_all <- rbind(cpn_df, cpn_na)
       
-    # add con model size
-    res <- cpn_all[, con_size := max(abs(pos_con), na.rm = TRUE), by = 'name']
+      # combine TE and gene intervals
+      intvs_dt <- 
+        c(
+          select(genes, id_unique, name, position_start, position_end), 
+          tes
+          ) %>% as.data.table
+      
+      # filter non-aligned intvs, and adjust alignment start, end for GRanges coverage function (start must be smaller than end)
+      intvs_adj <- 
+        intvs_dt[which(!is.na(position_start)), 
+          ][, position_start_old := position_start
+           ][which(strand == '-'), ':=' (position_start = position_end, position_end = position_start_old)
+            ][, !'position_start_old']
+            
+      # bp genomic cpn per family/gene
+      fam_bp_cpn <- 
+        as.data.table(coverage(as_granges(intvs_adj[which(is.na(downstream)), .(seqnames = name, start = position_start, end = position_end, strand)])))[, .(pos_con = 1:.N, cpn = value), by = 'group_name'][, name := group_name][, !'group_name']
+      
+      # bp genomic cpn per family (flanking region, -1 to indicate downstream) 
+      if (protocol == 'threeprime')
+      {
+        fam_bp_cpn_flank <- 
+          as.data.table(coverage(as_granges(intvs_adj[which(!is.na(downstream)), .(seqnames = name, start = position_start, end = position_end, strand)])))[, .(pos_con = 1:.N, cpn = value), by = 'group_name'][, name := group_name][, !'group_name'][, pos_con := -1 * pos_con]
+          
+        fam_bp_cpn <- rbind(fam_bp_cpn, fam_bp_cpn_flank)
+      }
+            
+      # bin and summarize counts
+      fam_bin_bps <- 
+        fam_bp_cpn[, pos_con := cut(pos_con, breaks = seq(-1e6, 1e6, by = bin_size), include.lowest = TRUE)
+          ][, .(bps = sum(cpn)), by = c('name', 'pos_con')] 
+          
+      # throw bins with 0 bp coverage (not present in curated TE universe)
+      fam_bin_bps <- fam_bin_bps[which(bps > 0), ]
+    }
+        
+    if (!is.na(conv_df))
+    {
+      # calc cpn on chunks because of size (parallel)
+      cpn_list <- 
+        foreach (i = 1:(length(chunks))) %dopar%
+        {
+          # print(i)
+          tes_chunk <- tes[chunks[[i]]]
+          
+          if (is.null(tes_subs$conversion)) # if conversion df missing, assumes 3' extension or rmsk alignments
+          {
+            chunk <- as.data.table(tes_subs)[, .(pos_con = position_start:position_end), by = c('name', 'id_unique')]
+          } else {
+            chunk <- rbindlist(tes_subs$conversion, idcol = 'name')
+          }
+          
+          res_chunk <- chunk[, .(cpn = .N), by = c('name', 'pos_con')] 
+          
+          return(res_chunk)
+        }
+      
+      # combine and sum cpn per family (chunking split families sometimes) and add consensus model size
+      cpn_df <- rbindlist(cpn_list)[, .(cpn = sum(cpn)), by = c('name', 'pos_con')]
+      
+      # add NA cpn counts (NA counts are wrong for rsmk alignment based estimates)
+      fam_tot_bps <- data.table(name = tes$name, bps = width(tes))[, .(bps = sum(bps)), by = 'name']
+      fam_con_bps <- cpn_df[, .(bps_con = sum(cpn)), by = 'name']
+      cpn_na <- merge(fam_tot_bps, fam_con_bps, by = 'name')[, .(pos_con =  NA, cpn = bps - bps_con), by = 'name']
+      
+      # combine na and con cpn dfs
+      cpn_all <- rbind(cpn_df, cpn_na)
+        
+      # add con model size
+      res <- cpn_all[, con_size := max(abs(pos_con), na.rm = TRUE), by = 'name']
+    }
+    
+    # relevel bins so negative is at end
+    res <- .relevelBins(fam_bin_bps)
+  } else {
+    res <- data.frame()
   }
   
-  # relevel bins so negative is at end
-  res <- .relevel(fam_bin_bps)
-        
   return(res)
 }
 
@@ -624,7 +638,7 @@ mapConPos = function(tes, nested = FALSE, bin_size = 20, n_threads = 1)
 }
 
 # relevels pos con column fact so that negative levels are at the end
-.relevel <- function(df)
+.relevelBins <- function(df)
 {
   if (sum(grepl('-', levels(df$pos_con))) > 0)
   {

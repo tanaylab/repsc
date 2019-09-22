@@ -1,0 +1,215 @@
+---
+title: "Repsc vignette"
+author: "David Brocks"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Repsc}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+# Workflow human 10x scRNA-seq dataset (5')
+In this tutorial, we are going to utilize 5' scRNA-seq data on epigenetically de-repressed cancer cell lines to quantify transposable element (TE) expression levels at single-cell and locus resolution. Following the workflow, you'll learn the specifics of Repsc to adapt it to your single-cell dataset.
+
+
+## Getting started
+
+We start the workflow by loading Repsc and the human hg38 _BSgenome_ object into our R environment:
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+Sys.time()
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repsc/')
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Reputils/')
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repdata/')
+
+library(BSgenome.Mmusculus.UCSC.mm10)
+```
+
+## Deduplicate Reads (parallel)
+```{r, eval = FALSE, echo = TRUE, warning = FALSE}
+# path to BAM/SAM files containing mapped reads                         
+sam_dirs <-  dir("/home/davidbr/tgdata/mars/work/190912_01/scdb/_trimmed_mapped_reads/", full.names = TRUE)
+
+cmds <- list()
+for (sam in sam_dirs)
+{
+  cmds[[sam]] <- glue("Reputils::deduplicateBAM('{sam}', outdir = '~/tgdata/data/eseb/mars/aligned/', align_dist = 1e3, paired = FALSE, ncores = 12)")
+}
+
+# distribute
+res <- 
+  Reputils:::gcluster.run3(command_list = cmds,  
+                           packages = c("data.table", "plyranges", "base", "stats"), 
+                           io_saturation = TRUE)
+```
+
+## Create scSet
+
+We then import our gene and TE annotation files as [GRanges objects](https://bioconductor.org/packages/release/bioc/vignettes/GenomicRanges/inst/doc/GenomicRangesIntroduction.html) followed by Repsc-specific curation and formatting using the `curateGenes` and `curateTEs` functions.
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+# path to Gencode gtf file (provided)
+gene_path <- system.file(package = 'Repdata', 
+                        'extdata', 
+                        'mm10',
+                        'genes',
+                        'gencode.vM22.annotation.gtf.gz')
+
+# path to RepeatMasker mm10 repeat annotation (provided)
+rmsk_path <- system.file(package = 'Repdata', 
+                         'extdata', 
+                         'mm10',
+                         'tes',
+                         'mm10.fa.out.gz')
+                         
+# creating the scSet
+sc <- createScSet(genome   = Mmusculus,
+                  protocol = 'threeprime',
+                  tes      = rmsk_path,
+                  genes    = gene_path)
+```
+
+## Create the input data.frame
+
+After we have imported and curated the data, we can procede to generate the actual read/UMI count matrix using the `compCounts` function.
+ 
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+# path to bam files containing mapped reads                         
+bam_paths <- dir("~/tgdata/data/eseb/mars/aligned/", full.names = TRUE, pattern = '_contig_dedup.bam$')
+bam_paths <- bam_paths[bam_paths %in% gsub('.bai', '', dir("~/tgdata/data/eseb/mars/aligned/", full.names = TRUE, pattern = '_contig_dedup.bam.bai$'))]
+mdata     <- fread("~/tgdata/data/eseb/mars/mdata.txt")
+
+# create a data.frame specifying import parameters                 
+input_df    <- data.frame(paths       = bam_paths,
+                          paired      = FALSE,
+                          meta        = gsub('_merged_contig_dedup.bam', '', basename(bam_paths)),
+                          barcode     = 'CB',
+                          chunk       = chunkFiles(bam_paths, 30),
+                          stringsAsFactors = FALSE)
+
+checkInput(input_df)                      
+```
+
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+sc <- addCounts(sc,
+                hierarchy    = 'locus',
+                bams         = input_df,
+                use_gcluster = TRUE)
+```
+
+## Match barcode with MARS-seq pipeline barcode
+
+```{r, eval = FALSE}
+# import annotation files from MARS-pipeline:
+cells  <- fread('~/tgdata/mars/work/190912_01/scdb/annotations/wells_cells.txt')[, ':=' (Plate = plate_ID, Well_ID = substring(Well_ID, nchar(Well_ID) - 2, 1e4))]
+plates <- fread('~/tgdata/mars/work/190912_01/scdb/annotations/amp_batches.txt')
+mdata <- merge(mdata, plates[, ':=' (Plate = Amp_batch_ID, meta = Seq_batch_ID)][, c('Pool_barcode', 'Plate', 'meta')], all.x = TRUE)
+
+# extract batch and well barcode
+counts <- sc@counts
+counts <- counts[, ':=' (Pool_barcode = substring(barcode, 1, 4), Cell_barcode = substring(barcode, 6, 12))]
+
+# combine annotation
+counts <- counts
+counts <-  # add plate ID
+  merge(counts, 
+        mdata[, c('Pool_barcode', 'meta', 'Plate', 'Amp.Batch.ID')], 
+        all.x = TRUE, 
+        by = c('Pool_barcode', 'meta'))
+counts <-  # add well ID
+  merge(counts, 
+        cells[, c('Cell_barcode', 'Well_ID', 'Plate')], 
+        all.x = TRUE, 
+        by = c('Cell_barcode', 'Plate'))
+counts <- counts[, barcode_mars := paste0(Amp.Batch.ID, '.WZM',  substring(Amp.Batch.ID, 6, 10), Well_ID)][, !c('Plate', 'Well_ID', 'Amp.Batch.ID', 'Pool_barcode', 'Cell_barcode')]
+sc@counts <- counts
+```
+
+## Add metacell ID and annotation
+
+```{r, eval = FALSE}
+counts <- sc@counts
+colors <- fread("/net/mraid14/export/tgdata/users/atanay/proj/ebdnmt/config/atlas_type_order.txt")
+fnames <- grep('recolor2.Rda$', dir('/net/mraid14/export/tgdata/users/atanay/proj/ebdnmt/scrna_db/', pattern = 'mc.eseb_07_', full.names = TRUE), value = TRUE)
+mcs    <- lapply(fnames, function(x)
+  {
+    mc <- get(load(x))
+    res <- data.table(barcode_mars = names(mc@mc), mc_id = as.integer(mc@mc), colour = mc@colors[as.integer(mc@mc)])
+    return(res)
+  })
+names(mcs) <- basename(fnames)
+mc_df <- merge(rbindlist(mcs, idcol = 'condition'), colors, by = 'colour', all.x = TRUE)[, !'colour'][, condition := substring(condition, 12, 14)]
+
+counts <- merge(counts, mc_df, by = 'barcode_mars', nomatch = 0)
+sc@counts <- counts
+```
+
+## Add EB day annotation
+
+```{r, eval = FALSE}
+loadMetaData <- function(paths)
+{
+  mdata <- lapply(paths, function(x)
+  {
+    meta <- get(load(x))@cell_metadata %>% rownames_to_column() %>% as.data.table()
+    meta[, barcode := rowname]
+  })
+  res <- rbindlist(mdata)
+  return(res)
+}
+
+counts <- sc@counts
+counts <- counts[, barcode := barcode_mars][, !c('barcode_mars', 'meta', 'pos_con')]
+
+mars_mdata <- loadMetaData(dir('/net/mraid14/export/tgdata/users/atanay/proj/ebdnmt/scrna_db/', pattern = 'mat.eseb_07_', full.names = TRUE))
+counts <- merge(counts, mars_mdata[, c('barcode', 'EB_day')], by = 'barcode', nomatch = 0)
+sc@counts <- counts
+Repsc::export(sc, output = 'long', outdir = '~/tgdata/data/eseb/mars/', intervals = TRUE)
+```
+
+## Compare repsc and mars counts
+```{r, eval = FALSE}
+mars <- get(load('/net/mraid14/export/tgdata/users/atanay/proj/ebdnmt/scrna_db/mat.eseb_07_D1.Rda'))@mat
+bcs_shared   <- intersect(colnames(mars), sc_f@counts$barcode_mars)
+genes_shared <- intersect(rownames(mars), sc_f@counts$name)
+
+gsize_mars <- data.table(name = rownames(mars), n_mars = Matrix::rowSums(mars[, bcs_shared]))
+gsize_sc   <- sc_f@counts[which(barcode_mars %in% bcs_shared & type == 'gene'), .(n_sc = sum(n)), by = 'name']
+p1         <- merge(gsize_mars, gsize_sc, by = 'name') %>% ggplot(aes(n_mars, n_sc)) + geom_point() + scale_x_log10() + scale_y_log10() + geom_abline(slope = 1, intercept = 0)
+
+csize_mars <- data.table(barcode_mars = bcs_shared, n_mars = Matrix::colSums(mars[genes_shared, bcs_shared]))
+csize_sc   <- sc_f@counts[which(name %in% genes_shared), .(n_sc = sum(n)), by = 'barcode_mars']
+p2         <- merge(csize_mars, csize_sc, by = 'barcode_mars') %>% ggplot(aes(n_mars, n_sc)) + geom_point() + scale_x_log10() + scale_y_log10() + geom_abline(slope = 1, intercept = 0)
+ 
+```
+
+## Mapping
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
+plotMapping(sc)
+```
+
+# Call peaks
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 12, fig.align='center'}
+sc <- selectPeaks(sc)
+plotPeaks(sc)
+```
+
+# Feature selection
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
+sc_f <- selectFeatures(sc_f)
+plotFeatures(sc_f)
+```
+
+
+      
+# References
+[1]   
+
+# Session information
+```{r}
+sessionInfo()
+```          

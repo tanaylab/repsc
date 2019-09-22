@@ -26,7 +26,7 @@ scSet <-
                                  genome     = 'BSgenome',
                                  protocol   = 'character', 
                                  tes        = 'GRanges',
-                                 tes_3p      = 'GRanges',
+                                 tes_3p     = 'GRanges',
                                  mdata      = 'data.frame',
                                  genes      = 'GRanges',
                                  tss        = 'GRanges',
@@ -35,9 +35,12 @@ scSet <-
                                  peaks      = 'GRanges',
                                  cstats     = 'data.frame',
                                  gstats     = 'data.frame',
+                                 mstats     = 'data.frame',
                                  pstats     = 'data.frame',
                                  msa_dir    = 'character',
                                  ds         = 'integer',
+                                 params     = 'list',
+                                 input      = 'data.frame',
                                  counts     = 'data.frame',
                                  counts_ds  = 'data.frame',
                                  bin_size   = 'integer',
@@ -101,10 +104,34 @@ setMethod(
       .Object@genome      <- genome
       .Object@protocol    <- protocol
       .Object@tes         <- tes_cur
-      .Object@tes_3p       <- tes_3p
+      .Object@tes_3p      <- tes_3p
       .Object@genes       <- genes_cur
       .Object@tss         <- tss
       .Object@ds          <- 1000L
+      .Object@params      <- list('addCounts'   = list('bin_size' = NULL,
+                                                       'te_exon_overlap' = NULL),
+                                  'selectCells' = list('method'   = NULL,
+                                                       'min_size' = NULL,
+                                                       'max_mito' = NULL,
+                                                       'min_ribo' = NULL,
+                                                       'lower'    = NULL,
+                                                       'niters'   = NULL,
+                                                       'fdr'      = NULL),
+                                  'selectPeaks' = list('neighb_bins' = NULL,
+                                                       'offset' = NULL,
+                                                       'min_expr' = NULL,
+                                                       'min_fc'= NULL,
+                                                       'fdr'   = NULL,
+                                                       'min_loci' = NULL,
+                                                       'summarize' = NULL),
+                                  'selectFeatures' = list('ds'    = NULL,
+                                                          'class' = NULL,
+                                                          'peak_only' = NULL,
+                                                          'reg' = NULL,
+                                                          'min_expr' = NULL,
+                                                          'min_expr_third' = NULL,
+                                                          'min_norm_var' = NULL,
+                                                          'k' = NULL))
       .Object@plots       <- list()
       .Object@n_cores     <- n_cores  
       .Object@seed        <- seed
@@ -118,13 +145,13 @@ setMethod("show", "scSet", function(object)
 { 
   genome_id  <- object@genome@pkgname
   #n_barcodes <- object@counts$barcode
-  #n_cells    <- object@n_cells
+  n_cells    <- nrow(object@cstats)
   n_tes      <- length(object@tes)
   n_fams     <- length(unique(object@tes$name))
   n_plots    <- length(object@plots)
   n_cores    <- object@n_cores
   
-  #message(glue::glue('scSet with {n_cells} cells'))
+  message(glue::glue('scSet with {n_cells} cells'))
   message(glue::glue('scSet object of {genome_id}'))
   message(glue::glue('with {n_tes} loci from {n_fams} families'))
   message(glue::glue('with {n_plots} QC plots'))

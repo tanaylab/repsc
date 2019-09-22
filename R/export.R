@@ -3,6 +3,7 @@ NULL
 
 setMethod("export", signature('scSet'), function(scSet, 
                                                  outdir    = NULL, 
+                                                 peak_only = FALSE,
                                                  by_meta   = FALSE,
                                                  output    = 'sparse',
                                                  intervals = FALSE,
@@ -20,6 +21,11 @@ setMethod("export", signature('scSet'), function(scSet,
   gstats <- scSet@gstats
   pstats <- scSet@pstats
   cstats <- scSet@cstats
+  
+  if (peak_only)
+  {
+    counts <- counts[which(peak | type == 'gene'), ]
+  }
   
   # create output directory
   datum <- gsub('-', '', Sys.Date())
@@ -61,7 +67,7 @@ setMethod("export", signature('scSet'), function(scSet,
       }
     } else {
       # factorizes barcodes so cells are identical between genes, loci, and fams
-      counts <- counts[, barcode := as.factor(paste(barcode, meta, sep = '|'))]
+      counts <- counts[, barcode := as.factor(barcode)]
       
       counts_te   <- counts[which(type == 'te'), ]
       counts_gene <- counts[which(type == 'gene'), ]
@@ -80,10 +86,11 @@ setMethod("export", signature('scSet'), function(scSet,
   # export stats
   fwrite(cstats, paste0(outdir, '/cell_stats.tsv'), sep = '\t')
   fwrite(pstats, paste0(outdir, '/peak_stats.tsv'), sep = '\t')
+  fwrite(mstats, paste0(outdir, '/mapping_stats.tsv'), sep = '\t')
   fwrite(gstats, paste0(outdir, '/feature_stats.tsv'), sep = '\t')
 
   # export workspace
-  if(workspace) { save(scSet, file = 'workspace.RData') }
+  if(workspace) { saveRDS(scSet, file = 'scSet.RDS', compress = TRUE) }
   
   # export history
   savehistory(file = 'command_history.txt')

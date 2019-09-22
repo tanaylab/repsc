@@ -20,35 +20,52 @@ addAlignments <- function(scSet,
                  settings_df = NULL)
 }
 
-#' Adds single-cell TE and genic counts 
-#'
-#' @param bams data.frame. Input data.frame specifying paths to mandatory bam files and reading specifics (e.g. paired status, mate, anchoring) and optional hdf5 files, as well as optional metadata. See example below for further details.
-#' @param bin_size Integer. Basepair bin size to group reads/UMIs on TE consensus/gene models. Default is 25 bps.
-#' @param use_gcluster Boolean. Use gcluster.run function to distribute jobs across HPC nodes. Requires misha package. If FALSE (the default), users can distribute jobs using the future infrastructure.
-#' @export
 addCounts <- function(scSet,
-                      bams     = NULL,
-                      msa_dir  = NULL,
-                      bin_size = 25,
-                      use_gcluster = FALSE)
+                      bams            = NULL,
+                      msa_dir         = NULL,
+                      te_exon_overlap = 'filter',
+                      hierarchy       = 'locus',
+                      bin_size        = NA,
+                      min_cell_size   = 100,
+                      use_gcluster    = FALSE)
 {
+  bams           <- as.data.table(bams)
   bin_size       <- as.integer(bin_size)
+  scSet@params[['addCounts']]$bin_size        <- bin_size
+  scSet@params[['addCounts']]$te_exon_overlap <- te_exon_overlap
+  scSet@input    <- bams
+  scSet@bin_size <- bin_size
   tes            <- scSet@tes
   tes_3p         <- scSet@tes_3p
   genes          <- scSet@genes
   protocol       <- scSet@protocol
   
-  # test if input files exist
-  if (sum(file.exists(bams$paths)) != nrow(bams)) { stop (bams$paths[file.exists(bams_paths)], 'does not exist') }
-  if (!is.null(bams$hdf5))
+  if (te_exon_overlap == 'filter')
   {
-    if (sum(file.exists(bams$hdf5)) != nrow(bams)) { stop (bams$paths[file.exists(bams_paths)], 'does not exist') }
+    tes       <- tes %>% filter(is.na(gene))
+    scSet@tes <- tes
+
+    if (length(tes_3p > 0))
+    {
+      tes_3p       <- tes_3p %>% filter(!id_unique %in% tes$id_unique)
+      scSet@tes_3p <- tes_3p
+    }
   }
   
+  # check input
+  checkInput(bams)
+  
+  # convert factor to character
+  bams$paths <- as.character(bams$paths)
+  
   # overwrite downstream results
-  scSet@cstats  <- data.frame()
-  scSet@pstats  <- data.frame()
-  scSet@gstats  <- data.frame()
+  scSet@counts    <- data.frame()
+  scSet@counts_ds <- data.frame()
+  scSet@cstats    <- data.frame()
+  scSet@pstats    <- data.frame()
+  scSet@gstats    <- data.frame()
+  scSet@plots     <- list()
+  scSet@cells     <- character()
   
   if (!is.null(msa_dir))
   {
@@ -57,6 +74,11 @@ addCounts <- function(scSet,
     message ('Done')
   } else {
     conv_df <- NA
+  }
+  
+  if (is.null(bams$chunk))
+  {
+    bams$chunk <- 1
   }
     
   #' Count number of reads per interval and cell barcode
@@ -70,13 +92,14 @@ addCounts <- function(scSet,
                                  tes,
                                  tes_3p,
                                  genes,
+                                 hierarchy    = '{hierarchy}',
                                  bin_size     = {bin_size},
                                  conversion   = {conv_df},
                                  protocol     = '{protocol}',
                                  use_gcluster = FALSE)")
     }
     # create new empty env and fill with relevant
-    empty <- new.env(parent = emptyenv())
+    empty        <- new.env(parent = emptyenv())
     empty$bams   <- bams
     empty$tes    <- tes
     empty$tes_3p <- tes_3p
@@ -90,27 +113,48 @@ addCounts <- function(scSet,
                     envir = empty, 
                     io_saturation = FALSE)
     
+    message ('Combining datasets')
     res <- rbindlist(lapply(res, function(x) x$retv))
+    message ('Done')
   } else {
     res <- 
       compCounts(bams, 
                  tes,
                  tes_3p,
                  genes,
-                 bin_size   = bin_size,
-                 sense_only = TRUE,
-                 conversion = conv_df,
-                 protocol   = protocol)
+                 hierarchy   = hierarchy,
+                 bin_size    = bin_size,
+                 sense_only  = TRUE,
+                 conversion  = conv_df,
+                 protocol    = protocol)
   }
   # summarize results in case of dumb chunking
-  counts <- res[, .(n = sum(n), n_all = sum(n_all)), by = c('barcode', 'name', 'id_unique', 'pos_con', 'type', 'meta')]
+  if (hierarchy == 'locus')
+  {
+    if (!is.na(bin_size))
+    {
+      counts <- res[, .(n = sum(n), n_all = sum(n_all)), by = c('barcode', 'name', 'id_unique', 'pos_con', 'type', 'meta')]
+    } else {
+      counts <- res[, .(n = sum(n), n_all = sum(n_all)), by = c('barcode', 'name', 'id_unique', 'type', 'meta')]
+      counts <- counts[, pos_con := NA]
+    }
+  } else {
+    if (!is.na(bin_size))
+    {
+      counts <- res[, .(n = sum(n), n_all = sum(n_all)), by = c('barcode', 'name', 'pos_con', 'type', 'meta')]
+    } else {
+      counts <- res[, .(n = sum(n), n_all = sum(n_all)), by = c('barcode', 'name', 'type', 'meta')]
+      counts <- counts[, pos_con := NA]
+    }
+    counts <- counts[, id_unique := name]
+  }
   
   # import 10x gene counts if defined
   if (!is.null(bams$hdf5))
   {
     message ('Importing 10x gene counts from hdf5 file(s)')
     # make hdf5 files unique
-    bams <- unique(bams[, colnames(bams) %in% c('hdf5', 'meta')])
+    bams <- unique(bams[, intersect(c('hdf5', 'meta'), colnames(bams)), with = FALSE])
     
     # import counts as list and name according to meta
     counts_10x_l <- lapply(bams$hdf5, import10x)
@@ -129,13 +173,23 @@ addCounts <- function(scSet,
     scSet@cells <- valid_cells  
   }
   
-  scSet@counts   <- counts
-  scSet@cpn      <- cpn(scSet)
+  # initially throw small cells based on unique genic reads/UMIs
+  bcs_keep <- counts[which(type == 'gene'), .(csize = sum(n)), by = 'barcode'][which(csize >= min_cell_size), ]$barcode
+  counts_f <- counts[which(barcode %fin% bcs_keep), ]
   
+  scSet@counts   <- counts_f
+  
+  # if (te_exon_overlap == 'resolve')
+  # {
+    # scSet <- resolveOverlaps(scSet, min_expr = 100)
+  # }
+    
   # add class annotation
   scSet <- annoClass(scSet)
   
+  scSet@cpn      <- cpn(scSet)
   scSet@cstats   <- cstats(scSet) # needs class annotation!
+  scSet@mstats   <- mstats(scSet) # needs class annotation!
     
   return(scSet)
 }

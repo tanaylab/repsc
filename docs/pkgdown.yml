@@ -1,0 +1,13 @@
+pandoc: 2.1.1
+pkgdown: 1.4.1
+pkgdown_sha: ~
+articles:
+  Prerequisites: ../../../../../../../../../home/davidbr/tgdata/src/Repsc/vignettes/Prerequisites.html
+  _10x_embryo_3': ../../../../../../../../../home/davidbr/tgdata/src/Repsc/vignettes/_10x_embryo_3'.html
+  _3'scRNA_mouse: ../../../../../../../../../home/davidbr/tgdata/src/Repsc/vignettes/_3'scRNA_mouse.html
+  _5'_vs_3'_comparison: ../../../../../../../../../home/davidbr/tgdata/src/Repsc/vignettes/_5'_vs_3'_comparison.html
+  _5'scRNA_human: ../../../../../../../../../home/davidbr/tgdata/src/Repsc/vignettes/_5'scRNA_human.html
+  _5'scRNA_mouse: ../../../../../../../../../home/davidbr/tgdata/src/Repsc/vignettes/_5'scRNA_mouse.html
+  _MARSeq_ESEB_mouse: ../../../../../../../../../home/davidbr/tgdata/src/Repsc/vignettes/_MARSeq_ESEB_mouse.html
+  _Smartseq2_mouse: ../../../../../../../../../home/davidbr/tgdata/src/Repsc/vignettes/_Smartseq2_mouse.html
+

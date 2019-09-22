@@ -1,0 +1,128 @@
+---
+title: "Repsc vignette"
+author: "David Brocks"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Repsc}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+# Workflow human 10x scRNA-seq dataset (5')
+In this tutorial, we are going to utilize 5' scRNA-seq data on epigenetically de-repressed cancer cell lines to quantify transposable element (TE) expression levels at single-cell and locus resolution. Following the workflow, you'll learn the specifics of Repsc to adapt it to your single-cell dataset.
+
+
+## Getting started
+
+We start the workflow by loading Repsc and the human hg38 _BSgenome_ object into our R environment:
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+Sys.time()
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repsc/')
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Reputils/')
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repdata/')
+
+library(BSgenome.Mmusculus.UCSC.mm10)
+```
+
+## Create scSet
+
+We then import our gene and TE annotation files as [GRanges objects](https://bioconductor.org/packages/release/bioc/vignettes/GenomicRanges/inst/doc/GenomicRangesIntroduction.html) followed by Repsc-specific curation and formatting using the `curateGenes` and `curateTEs` functions.
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+# path to Gencode gtf file (provided)
+gene_path <- system.file(package = 'Repdata', 
+                        'extdata', 
+                        'mm10',
+                        'genes',
+                        'gencode.vM22.annotation.gtf.gz')
+
+# path to RepeatMasker mm10 repeat annotation (provided)
+rmsk_path <- system.file(package = 'Repdata', 
+                         'extdata', 
+                         'mm10',
+                         'tes',
+                         'mm10.fa.out.gz')
+                         
+# creating the scSet
+sc <- createScSet(genome   = Mmusculus,
+                  protocol = 'fiveprime',
+                  tes      = rmsk_path,
+                  genes    = gene_path)
+```
+
+## Create the input data.frame
+
+After we have imported and curated the data, we can procede to generate the actual read/UMI count matrix using the `compCounts` function.
+ 
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+# path to bam files containing mapped reads                         
+bam_paths <-  dir('/net/mraid14/export/data/users/davidbr/proj/eseb/data/', 
+                  recursive = TRUE, 
+                  pattern = '_deduplicated_chr[0-9, X, Y, MT]+.bam', 
+                  full.names = TRUE)
+                  
+hdf5_paths <- dir('/net/mraid14/export/data/users/davidbr/proj/eseb/data/',
+                  recursive = TRUE,
+                  pattern = 'filtered_gene_bc_matrices_h5.h5',
+                  full.names = TRUE)
+
+# create a data.frame specifying import parameters                 
+input_df    <- data.frame(paths   = bam_paths,
+                          hdf5    = rep(hdf5_paths, each = 22),
+                          paired  = TRUE,       # use FALSE for single-end libraries
+                          mate    = 'first',    # only imports the first mate of properly aligned read pairs, set to NA when using single-end libraries
+                          barcode = 'CB',       # 10x barcode included in BAM flag
+                          chunk   = ntile(bam_paths, 40),
+                          meta    = gsub('/', '', substring(bam_paths, 56, 61)),
+                          stringsAsFactors = FALSE)
+                        
+head(input_df)                      
+```
+
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+sc <- addCounts(sc,
+                bams     = input_df,
+                bin_size = 25,
+                msa_dir  = NULL,
+                use_gcluster = TRUE)
+```
+
+## Call cells
+
+To distinguish real cells from empty droplets, we utilize the `emptyDrops` function from the [DropletUtils](https://rdrr.io/github/MarioniLab/DropletUtils/) package[1].
+
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 8, fig.align='center'}
+plotCells(sc)
+```
+
+## Mapping
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
+plotMapping(sc)
+```
+
+# Call peaks
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 12, fig.align='center'}
+sc <- selectPeaks(sc)
+plotPeaks(sc)
+```
+
+# Feature selection
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
+sc <- selectFeatures(sc)
+plotFeatures(sc)
+```
+
+
+      
+# References
+[1]   
+
+# Session information
+```{r}
+sessionInfo()
+```          

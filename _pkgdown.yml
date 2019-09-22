@@ -1,0 +1,36 @@
+template:
+  params:
+    bootswatch: yeti
+authors:
+  David Brocks:
+    href: https://scholar.google.de/citations?user=ossdDj4AAAAJ&hl=en&oi=ao
+
+navbar:
+  title: "Repsc"
+  left:
+    - text: "Home"
+      icon: fa-home
+      href: index.html
+    - text: "Prerequisites"
+      icon: fa-play-circle
+      href: articles/Prerequisites.html
+    - text: "Tutorials"
+      menu:
+      - text: "5' scRNA-seq of human cancer cells"
+        href: articles/5'scRNA_human.html
+      - text: "5' scRNA-seq of mouse ES cells"
+        href: articles/5'scRNA_mouse.html
+      - text: "3' scRNA-seq of mouse embryos"
+        href: articles/3'scRNA_mouse.html
+      - text: "Smartseq2 of mouse embryos"
+        href: articles/Smartseq2_mouse.html
+    - text: "Reference"
+      href: reference/index.html
+      icon: fa-th-list
+    - text: "News"
+      icon: fa-news
+      href: news/index.html
+  right:
+    - text: "Bitbucket"
+      icon: fa-bitbucket-square
+      href: https://bitbucket.org/tanaylab/repsc/src/default/

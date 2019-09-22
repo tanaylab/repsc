@@ -1,10 +1,12 @@
 Package: Repsc
 Title: Single-cell expression analysis of transposable elements
-Version: 0.0.0.9000
+Version: 0.0.1.0
 Authors@R: person("David", "Brocks", email = "david.brocks@weizmann.ac.il", role = c("aut", "cre"))
 Description: Single-cell expression analysis of transposable elements
+URL: https://github.com/tanaylab/repsc
+BugReports: https://github.com/tanaylab/repsc/issues
 Depends: R (>= 3.5.1)
-License: What license is it under?
+License: GPL
 Encoding: UTF-8
 LazyData: true
 Imports:
@@ -16,18 +18,23 @@ Imports:
   data.table,
   doFuture,
   dplyr,
+  FNN,
   foreach,
   future,
   GenomicAlignments,
   GenomeInfoDb,
   GenomicRanges,
   ggplot2,
+  ggridges,
   glue,
+  hdf5r,
+  igraph,
   kmer,
   Matrix,
   parallel,
   plyr,
   plyranges,
+  remotes,
   Rsamtools,
   rtracklayer,
   S4Vectors,
@@ -35,6 +42,9 @@ Imports:
   treemapify,
   tibble,
   tidyr
+Remotes: 
+  tanaylab/tgstats,
+  tanaylab/Reputils  
 RoxygenNote: 6.1.1
 Roxygen: list(markdown = TRUE)
 Suggests: 
@@ -48,6 +58,7 @@ Collate:
     'accessors.R'
     'add.R'
     'annotate.R'
+    'check.R'
     'compute.R'
     'curate.R'
     'export.R'

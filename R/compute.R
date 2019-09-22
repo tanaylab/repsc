@@ -80,7 +80,8 @@ compCounts <- function(bams,
                        tes,
                        tes_3p,
                        genes,
-                       bin_size = 25,
+                       hierarchy = 'locus',
+                       bin_size = NA,
                        sense_only = TRUE,
                        conversion = NULL,
                        protocol = 'fiveprime',
@@ -94,15 +95,16 @@ compCounts <- function(bams,
   genes <- genes %>% select(id_unique, name, position_start, position_end)
   
   # import reads from bam file
-  reads <- Reputils::importBAM(bams, anchor = protocol, use_gcluster = use_gcluster)
+  reads <- Reputils::importBAM(bams, anchor = protocol, use_gcluster = use_gcluster, tag = 'NH')
+  reads <- reads[which(!is.na(barcode)), ]
   
   # add dummy meta column if none provided
   if (is.null(reads$meta))
   {
-    reads[, meta := 1L]
+    reads <- reads[, ':=' (meta = 'sample', barcode = paste(barcode, 'sample', sep = '|'))]
   }
   
-  # extend TE intervals downstream if threeprime protocol is used
+  # combine TE intervals downstream if threeprime protocol is used
   if (protocol == 'threeprime')
   {
     tes <- c(tes_3p, tes)
@@ -118,32 +120,35 @@ compCounts <- function(bams,
     intervals <- mutate(tes, type = 'te')
   }
         
-  #GenomeInfoDb::seqlevelsStyle(intervals) <- GenomeInfoDb::seqlevelsStyle(reads)
-  
   # convert to data.table
   intervals <- as.data.table(intervals)
   
   # join reads by intervals
   hits   <- matchReads(intervals, reads, sense_only = sense_only)
   
+  # split genic and te counts
+  hits_gene <- hits[which(type == 'gene'), ][, ':=' (pos_con = 1L, id_unique = name)] # removes information about position on gene
+  hits_te   <- hits[which(type == 'te'), ]
+  
   message ('Mapping read position on consensus') # check 0/1 based accuracy!
   if (is.na(conversion)) 
   {
     # using rmsk alignment (crude)
-    hits[, ':=' (dist_start = start_read - start, dist_end = end - start_read)]
-    hits[which(dist_start <= dist_end & strand == '+'),  pos_con := position_start + dist_start]
-    hits[which(dist_start > dist_end & strand == '+'),  pos_con := position_end   - dist_end]
-    hits[which(dist_start <= dist_end & strand == '-'),  pos_con := position_start - dist_start]
-    hits[which(dist_start > dist_end & strand == '-'),  pos_con := position_end   + dist_end]
-    hits[which(strand == '+' & (pos_con > position_end | pos_con < position_start)), pos_con := NA
+    hits_te[, ':=' (dist_start = start_read - start, dist_end = end - start_read)]
+    hits_te[which(dist_start <= dist_end & strand == '+'),  pos_con := position_start + dist_start]
+    hits_te[which(dist_start > dist_end & strand == '+'),  pos_con := position_end   - dist_end]
+    hits_te[which(dist_start <= dist_end & strand == '-'),  pos_con := position_start - dist_start]
+    hits_te[which(dist_start > dist_end & strand == '-'),  pos_con := position_end   + dist_end]
+    hits_te[which(strand == '+' & (pos_con > position_end | pos_con < position_start)), pos_con := NA
          ][which(strand == '-' & (pos_con > position_start | pos_con < position_end)), pos_con := NA]
   } else {
     # with conversion df
-    hits_gene <- hits[which(type == 'gene'), ][, pos_con := pos]
-    hits_te   <- hits[which(type == 'te'), ]
+
     hits_te   <- merge(hits_te, conversion, all.x = TRUE, by = c('id_unique', 'pos', 'name'))
-    hits      <- rbind(hits_gene, hits_te)
   }
+  
+  # combine te and genic
+  hits      <- rbindlist(list(hits_gene, hits_te[, !c('dist_start', 'dist_end')]))
   
   # modify downstream extended counts by multiplying * -1
   if (protocol == 'threeprime')
@@ -151,33 +156,51 @@ compCounts <- function(bams,
     hits <- hits[which(downstream), pos_con := as.integer(pos_con * -1)]
   }
   
-  if (bin_size > 1)
+  if (!is.na(bin_size))
   {
     message ("Binning positions")
     hits <- hits[, pos_con := cut(pos_con, breaks = seq(-1e6, 1e6, by = bin_size), include.lowest = TRUE)] # use labels = FALSE might accelerate speed
+  } else {
+    hits[, pos_con := 1L]
   }
   
-  if (protocol == 'threeprime')
+  if (protocol == 'threeprime' & !is.na(bin_size))
   {
     # reorder factor levels so that downstream extension is at the end
     hits <- hits[, pos_con := forcats::fct_relevel(pos_con, rev(grep('-', levels(pos_con), fixed = TRUE, value = TRUE)), after = Inf)]
   }
-    
+  
 	message ('Computing single-cell counts')
   # count how often interval occurs for given barcode 
-  res <- hits[, ':=' (uniq = NH == 1, NH_weight = 1 / NH)][,.(n = sum(uniq), n_all = sum(NH_weight)), by = c('barcode', 'id_unique', 'pos_con', 'name', 'type', 'meta')]
+  if (hierarchy == 'locus')
+  {
+    res <- hits[, ':=' (uniq = NH == 1, NH_weight = 1 / NH)][,.(n = sum(uniq), n_all = sum(NH_weight)), by = c('barcode', 'id_unique', 'pos_con', 'name', 'type', 'meta')]
+  } else {
+    res <- hits[, ':=' (uniq = NH == 1, NH_weight = 1 / NH)][,.(n = sum(uniq), n_all = sum(NH_weight)), by = c('barcode', 'pos_con', 'name', 'type', 'meta')]
+    res <- res[, id_unique := name]
+  }
 
+  # round n_all
+  res <- res[, n_all := round(n_all, 3)]
+  
+  # remove pos_con info from genes and tes if not defined
+  if (is.na(bin_size))
+  {
+    res <- res[, pos_con := NA]
+  } else {
+    res <- res[which(type == 'gene'), pos_con := NA]
+  }
+  
 	return(res)
 }
 
-cstats <- function(scSet)
+cstats <- function(scSet) # slow, can be improved!
 {
   if (sum(dim(scSet@cstats)) == 0)
   {
-    message ('Computing ribosomal/mitochondrial percentage per cell')
+    message ('Computing cell stats')
     ribo_prefixes <- c('Human' = '^RP[LS]', 'Mouse' = '^Rp[ls]')
     mito_prefixes <- c('Human' = '^MT-', 'Mouse' = '^mt-')   
-    cells         <- scSet@cells
     genes         <- scSet@genes
     organism      <- scSet@genome@common_name
     counts        <- scSet@counts
@@ -202,23 +225,32 @@ cstats <- function(scSet)
      
     # tag mito/ribo genes
     counts_gene <- 
-      counts_gene[, .(gene_tot = sum(n)), by = c('barcode', 'meta', 'name')][, ':=' (mito = name %in% mt_genes, ribo = name %in% ribo_genes)]
+      counts_gene[, .(gene_tot = sum(n), gene_tot_all = sum(n_all)), by = c('barcode', 'name')][, ':=' (mito = name %fin% mt_genes, ribo = name %fin% ribo_genes)]
     
     # summarize percentage  
     summary_genes <-
-      counts_gene[, .(size_genic = sum(gene_tot), n_ribo = sum(gene_tot[ribo]), n_mito = sum(gene_tot[mito])), by = c('barcode', 'meta')
-        ][, ':=' (perc_ribo = round(n_ribo / size_genic * 100, 2), perc_mito = round(n_mito / size_genic * 100, 2))]
+      counts_gene[, .(size_genic = sum(gene_tot), 
+                      size_genic_all = sum(gene_tot_all),
+                      n_genes    = length(unique(name)),
+                      n_ribo = sum(gene_tot[ribo]), 
+                      n_mito = sum(gene_tot[mito])), by = c('barcode')
+        ][, ':=' (perc_mito = round(n_mito / size_genic * 100, 2),
+                  perc_ribo = round(n_ribo / size_genic * 100, 2))]
     
     # summarize umis per class and mapping (all, uniq)
     summary_tes <-
-      counts_te[, .(all = sum(n_all), uniq = sum(n)), by = c('barcode', 'class')] %>%
-        tidyr::gather('mapping', 'n', -1:-2) %>% 
+      counts_te[, .(all = sum(n_all), uniq = sum(n)), by = c('barcode', 'class', 'meta')] %>%
+        tidyr::gather('mapping', 'n', -1:-3) %>% 
         mutate(class = paste(class, mapping, sep = '_')) %>% 
         select(-mapping) %>% 
         tidyr::spread(class, n, fill = 0) %>% 
-        mutate(TE_all = DNA_all + LINE_all + LTR_all + SINE_all, 
-               TE_uniq = DNA_uniq + LINE_uniq + LTR_uniq + SINE_uniq) %>% 
         as.data.table()
+    
+    # calc total TE umis
+    patterns  <- c('all', 'uniq')
+    TE_counts <- sapply(patterns, function(xx) rowSums(summary_tes[,grep(xx, names(summary_tes)), drop=FALSE, with = FALSE]))
+    colnames(TE_counts) <- paste0('TE_', patterns)
+    summary_tes <- cbind(summary_tes, TE_counts)
     
     # cbind genic and te stats
     bcstats <- 
@@ -235,6 +267,18 @@ cstats <- function(scSet)
   }  
   
   return(bcstats) 
+}
+
+mstats <- function(scSet,
+                   reg = 100)
+{
+  message ('Computing mapping stats')
+  counts <- scSet@counts
+  
+  mstats <- counts[, .(uniq = sum(n), all = sum(n_all)), by = c('name', 'type', 'class')
+    ][, ':=' (perc_unique = uniq / all * 100, delta = all - uniq, fc = (all + reg) / (uniq + reg))]
+  
+  return(mstats)
 }
   
 compClassLoad <- function(scSet = NULL)

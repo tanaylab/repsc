@@ -43,7 +43,7 @@ Imports:
   tibble,
   tidyr
 Remotes: 
-  tanaylab/tgstats,
+  tanaylab/tgstat,
   tanaylab/Reputils  
 RoxygenNote: 6.1.1
 Roxygen: list(markdown = TRUE)

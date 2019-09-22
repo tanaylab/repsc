@@ -22,8 +22,7 @@ In this tutorial, we are going to utilize 5' scRNA-seq data on epigenetically de
 
 We start the workflow by loading Repsc and the human hg38 _BSgenome_ object into our R environment:
 ```{r, eval = TRUE, echo = TRUE, warning = FALSE}
-devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repsc/')
-devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Reputils/')
+library(Repsc)
 devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repdata/')
 
 # adjust to your genome of interest (e.g. BSgenome.Mmusculus.UCSC.mm10)

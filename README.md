@@ -38,7 +38,7 @@ if (!requireNamespace("remotes", quietly = TRUE))
     install.packages("remotes")
 
 # Install Repsc
-remotes::install_github('Repsc', repos = 'tanaylab.bitbucket.io/repo')
+remotes::install_github('tanaylab/repsc')
 ```
 
 **Note**: Repsc requires R version 3.5 or higher. The package was tested

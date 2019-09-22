@@ -43,7 +43,7 @@ if (!requireNamespace("remotes", quietly = TRUE))
     install.packages("remotes")
 
 # Install Repsc
-remotes::install_github('Repsc', repos = 'tanaylab.bitbucket.io/repo')
+remotes::install_github('tanaylab/repsc')
 ```
 
 **Note**: Repsc requires R version 3.5 or higher. The package was tested on linux. We are working on reducing memory usage, but currently a typical application will require at least 12 GB RAM, but heavier use cases (e.g. large BAM files) may require significantly more. For improved speed performance, we recommend a multi-CPU/core workstation, or ideally a HPC infrastructure.

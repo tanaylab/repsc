@@ -83,7 +83,7 @@ addCounts <- function(scSet,
     bams$chunk <- 1
   }
     
-  #' Count number of reads per interval and cell barcode
+  # Count number of reads per interval and cell barcode
   if (use_gcluster)
   {
     cmds <- list()

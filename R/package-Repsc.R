@@ -20,7 +20,7 @@
 #' @import parallel
 #' @import plyranges
 #' @import Matrix
-#' @import Reputils
+#' @import reputils
 #' @import Rsamtools
 #' @import S4Vectors
 #' @import tgstat

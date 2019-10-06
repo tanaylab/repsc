@@ -9,6 +9,7 @@ Depends: R (>= 3.5.1)
 License: GPL
 Encoding: UTF-8
 LazyData: true
+biocViews:
 Imports:
   ape,
   Biostrings,
@@ -20,6 +21,7 @@ Imports:
   dplyr,
   FNN,
   foreach,
+  fst,
   future,
   GenomicAlignments,
   GenomeInfoDb,
@@ -42,9 +44,7 @@ Imports:
   treemapify,
   tibble,
   tidyr
-Remotes: 
-  tanaylab/tgstat,
-  tanaylab/Reputils  
+Remotes: tanaylab/tgstat, tanaylab/Reputils  
 RoxygenNote: 6.1.1
 Roxygen: list(markdown = TRUE)
 Suggests: 

@@ -327,10 +327,14 @@ mapConMSA <- function(msa,
 # join reads by intervals
 matchReads <- function(intervals, 
                        reads,
+                       #resolve_multi = TRUE,
                        sense_only = FALSE)  # not supported right now
 {
   # modify read columns 
   reads[, ':=' (start_read = start)]
+  
+    # remove duplicated read entries (can happen if neglected mate (2nd) maps to different positions). NH doesn't need to be adjusted
+  reads <- unique(reads)
   
   # faster than findOverlaps and much faster than join_overlap_inner_directed!
   foverlaps.DTs <- function(DT.x, DT.y)
@@ -340,15 +344,37 @@ matchReads <- function(intervals,
     return(res)
   }
   
+  # if (resolve_multi)
+  # {
+    # if (sum(reads[which(NH > 1), ][, .(nomatch = .N != max(NH)), by = 'qname']$nomatch) > 0)
+    # {
+      # stop ('NH tag does not match number of alignments. Did you split the BAM by chromosome?')
+    # }
+  
+  # }
+  
   message ('Finding read vs TE/Gene overlaps')
   hits = foverlaps.DTs(reads, intervals)
     
   # join based on overlaps
-  res <- bind_cols(intervals[hits$yid, !c('seqnames', 'width')],
-                   reads[hits$xid, colnames(reads) %in% c('start_read', 'barcode', 'NH', 'meta', 'start_read'), with = FALSE])
+  hits <- bind_cols(intervals[hits$yid, !c('seqnames', 'width')],
+                    reads[hits$xid, colnames(reads) %in% c('start_read', 'barcode', 'NH', 'meta', 'start_read', 'qname'), with = FALSE])
+                   
+  # deduplicate reads that map to same locus (might affect pos_con mapping)
+  hits_dedup <- hits[, dupl := duplicated(paste0(id_unique, qname))][, n_dupl := sum(dupl), by = 'qname'][, NH := NH - n_dupl][which(!dupl), ]
+  
+  
+  # bla = hits_dedup[which(NH > 1), ][, .(n_loci = .N, loc_comb  = paste0(id_unique, collapse = '-'), id_unique = id_unique), by = c('barcode', 'qname')][which(n_loci > 1), ][, .(id_unique = unique(id_unique), n = length(unique(qname))), by = c('barcode', 'loc_comb')]
+  
+  # bla2 = hits_dedup[which(NH == 1), .(n_uniq = .N), by = c('barcode', 'id_unique')]
+  
+  # test <- merge(bla, bla2, by = c('barcode', 'id_unique'), all.x = TRUE)
+  # test[is.na(test)] <- 0
+  
+  # test[, .(cor = cor(n, n_uniq, method = 'spearman')), by = c('loc_comb', 'id_unique')][which(is.na(cor)), cor := 0][order(loc_comb, cor),][which(cor > 0.1),]
   
   message ('Done')
-  return(res)
+  return(hits_dedup)
 }
 
 # computes genomic cpn and number of bps per bin for TE and gene intervals

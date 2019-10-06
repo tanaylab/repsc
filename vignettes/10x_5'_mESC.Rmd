@@ -1,0 +1,155 @@
+---
+title: "Repsc vignette"
+author: "David Brocks"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Repsc}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(eval = FALSE)
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+```
+
+# Workflow mouse 10x scRNA-seq dataset (5')
+In this tutorial, we are going to utilize 5' scRNA-seq data on mouse embryonic stem cells (mESCs) and day 2 embryod bodies (EBs). Following the workflow, you'll learn the specifics of Repsc to adapt it to your single-cell dataset.
+
+
+## Getting started
+
+We start the workflow by loading Repsc and the human hg38 _BSgenome_ object into our R environment:
+```{r, eval = TRUE, echo = FALSE, warning = FALSE}
+Sys.time()
+library(Repsc)
+library(Reputils)
+library(BSgenome.Mmusculus.UCSC.mm10)
+
+# Repdata contains gene and TE annotation files, you can download and define those files manually (see below)
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repdata/')
+```
+
+## Deduplicate Reads (parallel)
+
+We remove duplicated reads by creating artificial contigs along the chromosomes followed by deduplication with [UMI tools](https://github.com/CGATOxford/UMI-tools).
+
+```{r, eval = FALSE, echo = TRUE, warning = FALSE}
+# path to BAM/SAM files containing mapped reads                         
+bam_paths <-  dir("~/tgdata/data/eseb/10x/data/combined/aligned", full.names = TRUE, pattern = 'bam.bam$')
+
+# split BAM by chromosome
+for (bam in bam_paths)
+{
+  Reputils::splitBAM(bam)
+}
+
+# deduplicate split BAMs
+bam_paths <- dir("~/tgdata/data/eseb/10x/data/combined/aligned", full.names = TRUE, pattern = 'chr[0-9, X, Y, MT]*.bam$')
+future::plan(future.batchtools::batchtools_sge(resources = list(queue = "all.q", threads = 3, memory = 25), workers = Inf))
+res <- listenv::listenv()
+for (bam in bam_paths)
+{
+  print(bam)
+  res[[bam]] %<-% Reputils::deduplicateBAM(bam, paired = TRUE, ncores = 3, align_dist = 1e3) %packages% "data.table"
+}
+as.list(res)
+```
+
+
+## Create scSet
+
+We then import our gene and TE annotation files as [GRanges objects](https://bioconductor.org/packages/release/bioc/vignettes/GenomicRanges/inst/doc/GenomicRangesIntroduction.html) followed by Repsc-specific curation and formatting using the `curateGenes` and `curateTEs` functions.
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+# path to Gencode gtf file (provided)
+gene_path <- system.file(package = 'Repdata', 
+                        'extdata', 
+                        'mm10',
+                        'genes',
+                        'gencode.vM22.annotation.gtf.gz')
+
+# path to RepeatMasker mm10 repeat annotation (provided)
+rmsk_path <- system.file(package = 'Repdata', 
+                         'extdata', 
+                         'mm10',
+                         'tes',
+                         'mm10.fa.out.gz')
+                         
+# creating the scSet
+sc <- createScSet(genome   = Mmusculus,
+                  protocol = 'fiveprime',
+                  tes      = rmsk_path,
+                  genes    = gene_path)
+```
+
+## Create the input data.frame
+
+Here we define the input data
+ 
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+# path to bam files containing mapped reads                         
+bam_paths <-  dir("~/tgdata/data/eseb/10x/data/combined/aligned/", 
+                  pattern = 'dedup.bam$', 
+                  full.names = TRUE)
+                  
+hdf5_paths <- dir('/net/mraid14/export/data/users/davidbr/proj/eseb/data/',
+                  recursive = TRUE,
+                  pattern = 'filtered_gene_bc_matrices_h5.h5',
+                  full.names = TRUE)
+
+# create a data.frame specifying import parameters                 
+input_df    <- data.frame(paths   = bam_paths,
+                          paired  = TRUE,       # use FALSE for single-end libraries
+                          mate    = 'first',    # only imports the first mate of properly aligned read pairs, set to NA when using single-end libraries
+                          barcode = 'CB',       # 10x barcode included in BAM flag
+                          chunk   = Reputils:::chunkFiles(bam_paths, 20),
+                          meta    = gsub('/', '', substring(bam_paths, 57, 64)),
+                          stringsAsFactors = FALSE)
+                        
+head(input_df)                      
+```
+
+```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+sc <- addCounts(sc,
+                bams     = input_df,
+                bin_size = 25,
+                use_gcluster = TRUE)
+```
+
+## Call cells
+
+To distinguish real cells from empty droplets, we utilize the `emptyDrops` function from the [DropletUtils](https://rdrr.io/github/MarioniLab/DropletUtils/) package[1].
+
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 8, fig.align='center'}
+plotCells(sc)
+sc_f <- selectCells(sc, min_size = 1e4, max_mito = 0.05)
+plotCells(sc_f)
+```
+
+## Mapping
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
+plotMapping(sc_f)
+```
+
+# Call peaks
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 12, fig.align='center'}
+sc <- selectPeaks(sc)
+plotPeaks(sc)
+```
+
+# Feature selection
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
+sc_f <- selectFeatures(sc_f)
+plotFeatures(sc)
+```
+
+
+      
+# References
+[1]   
+
+# Session information
+```{r}
+sessionInfo()
+```          

@@ -98,6 +98,9 @@ compCounts <- function(bams,
   reads <- Reputils::importBAM(bams, anchor = protocol, use_gcluster = use_gcluster, tag = 'NH')
   reads <- reads[which(!is.na(barcode)), ]
   
+  # remove duplicated read entries (can happen if neglected mate (2nd) maps to different positions). NH doesn't need to be adjusted
+  reads <- unique(reads)
+  
   # add dummy meta column if none provided
   if (is.null(reads$meta))
   {
@@ -225,7 +228,7 @@ cstats <- function(scSet) # slow, can be improved!
      
     # tag mito/ribo genes
     counts_gene <- 
-      counts_gene[, .(gene_tot = sum(n), gene_tot_all = sum(n_all)), by = c('barcode', 'name')][, ':=' (mito = name %fin% mt_genes, ribo = name %fin% ribo_genes)]
+      counts_gene[, .(gene_tot = sum(n), gene_tot_all = sum(n_all)), by = c('barcode', 'name', 'meta')][, ':=' (mito = name %fin% mt_genes, ribo = name %fin% ribo_genes)]
     
     # summarize percentage  
     summary_genes <-
@@ -233,19 +236,19 @@ cstats <- function(scSet) # slow, can be improved!
                       size_genic_all = sum(gene_tot_all),
                       n_genes    = length(unique(name)),
                       n_ribo = sum(gene_tot[ribo]), 
-                      n_mito = sum(gene_tot[mito])), by = c('barcode')
+                      n_mito = sum(gene_tot[mito])), by = c('barcode', 'meta')
         ][, ':=' (perc_mito = round(n_mito / size_genic * 100, 2),
                   perc_ribo = round(n_ribo / size_genic * 100, 2))]
     
     # summarize umis per class and mapping (all, uniq)
     summary_tes <-
-      counts_te[, .(all = sum(n_all), uniq = sum(n)), by = c('barcode', 'class', 'meta')] %>%
-        tidyr::gather('mapping', 'n', -1:-3) %>% 
+      counts_te[, .(all = sum(n_all), uniq = sum(n)), by = c('barcode', 'class')] %>%
+        tidyr::gather('mapping', 'n', -1:-2) %>%
         mutate(class = paste(class, mapping, sep = '_')) %>% 
         select(-mapping) %>% 
         tidyr::spread(class, n, fill = 0) %>% 
         as.data.table()
-    
+
     # calc total TE umis
     patterns  <- c('all', 'uniq')
     TE_counts <- sapply(patterns, function(xx) rowSums(summary_tes[,grep(xx, names(summary_tes)), drop=FALSE, with = FALSE]))

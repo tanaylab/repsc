@@ -20,6 +20,8 @@ addAlignments <- function(scSet,
                  settings_df = NULL)
 }
 
+#' Add TE/Gene counts to scSet
+#' @export
 addCounts <- function(scSet,
                       bams            = NULL,
                       msa_dir         = NULL,

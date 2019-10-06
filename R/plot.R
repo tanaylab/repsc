@@ -961,7 +961,10 @@ plotUMIs <- function(scSet,
     
     ggdata <- 
       counts[, .(n_uniq = sum(n), n_uniq_peak = sum(n[peak])), by = 'class'] %>%
-        tidyr::gather('mapping', 'umis', n_uniq, n_uniq_peak)
+        mutate(perc = round(n_uniq_peak / n_uniq * 100, 2)) %>% 
+        mutate(n_uniq = n_uniq - n_uniq_peak) %>%
+        tidyr::gather('mapping', 'umis', n_uniq, n_uniq_peak) %>%
+        mutate(perc = ifelse(mapping == 'n_uniq', '', perc))
   }
   
   if (what == 'mapping')

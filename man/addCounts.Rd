@@ -2,12 +2,12 @@
 % Please edit documentation in R/add.R
 \name{addCounts}
 \alias{addCounts}
-\title{Count number of reads per interval and cell barcode}
+\title{Add TE/Gene counts to scSet}
 \usage{
 addCounts(scSet, bams = NULL, msa_dir = NULL,
   te_exon_overlap = "filter", hierarchy = "locus", bin_size = NA,
   min_cell_size = 100, use_gcluster = FALSE)
 }
 \description{
-Count number of reads per interval and cell barcode
+Add TE/Gene counts to scSet
 }

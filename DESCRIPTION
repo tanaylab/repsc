@@ -37,22 +37,21 @@ Imports:
   parallel,
   plyr,
   plyranges,
-  remotes,
+  Reputils,
   Rsamtools,
   rtracklayer,
   S4Vectors,
   stringr,
+  tgstat,
   treemapify,
   tibble,
   tidyr
 Remotes: 
-  r-lib/httr,
   tanaylab/tgstat, 
   tanaylab/reputils  
 RoxygenNote: 6.1.1
 Roxygen: list(markdown = TRUE)
 Suggests: 
-    doMC,
     knitr,
     rmarkdown,
     testthat

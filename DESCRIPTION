@@ -44,7 +44,7 @@ Imports:
   treemapify,
   tibble,
   tidyr
-Remotes: tanaylab/tgstat, tanaylab/reputils  
+Remotes: tanaylab/tgstat
 RoxygenNote: 6.1.1
 Roxygen: list(markdown = TRUE)
 Suggests: 

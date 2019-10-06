@@ -18,6 +18,7 @@ Imports:
   DECIPHER,
   data.table,
   doFuture,
+  doMC,
   dplyr,
   FNN,
   foreach,

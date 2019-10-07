@@ -886,6 +886,8 @@ plotFeatureComp <- function(scSet,
   # return(p4)                           
 # }
 
+#' Plot mapping stats
+#' @export
 plotMapping <- function(scSet,
                         type = 'te')
 {

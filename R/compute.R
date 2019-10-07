@@ -159,7 +159,7 @@ compCounts <- function(bams,
   if (!is.na(bin_size))
   {
     message ("Binning positions")
-    bin_range <- seq(0, 1e6, by = bin_size)[which.min(abs(seq(0, 1e6, by = 25) - max(tes$position_start, tes$position_end, width(tes_3p), na.rm = TRUE)))]
+    bin_range <- seq(0, 1e6, by = bin_size)[which.min(abs(seq(0, 1e6, by = bin_size) - max(tes$position_start, tes$position_end, width(tes_3p), na.rm = TRUE)))]
     hits      <- hits[, pos_con := cut(pos_con, breaks = seq(-bin_range, bin_range, by = bin_size), include.lowest = TRUE)] # use labels = FALSE might accelerate speed
   } else {
     hits[, pos_con := 1L]

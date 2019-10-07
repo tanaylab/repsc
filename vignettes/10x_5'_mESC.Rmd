@@ -24,7 +24,6 @@ We start the workflow by loading Repsc and the human hg38 _BSgenome_ object into
 ```{r, eval = TRUE, echo = FALSE, warning = FALSE}
 Sys.time()
 library(Repsc)
-library(Reputils)
 library(BSgenome.Mmusculus.UCSC.mm10)
 
 # Repdata contains gene and TE annotation files, you can download and define those files manually (see below)
@@ -114,7 +113,7 @@ checkInput(input_df)
 sc <- addCounts(sc,
                 bams     = input_df,
                 bin_size = 25,
-                use_gcluster = FALSE)
+                use_gcluster = TRUE)
 ```
 
 ## Call cells

@@ -107,21 +107,21 @@ input_df    <- data.frame(paths   = bam_paths,
                           meta    = gsub('/', '', substring(bam_paths, 57, 64)),
                           stringsAsFactors = FALSE)
                         
-head(input_df)                      
+checkInput(input_df)                      
 ```
 
 ```{r, eval = TRUE, echo = TRUE, warning = FALSE}
 sc <- addCounts(sc,
                 bams     = input_df,
                 bin_size = 25,
-                use_gcluster = TRUE)
+                use_gcluster = FALSE)
 ```
 
 ## Call cells
 
 To distinguish real cells from empty droplets, we utilize the `emptyDrops` function from the [DropletUtils](https://rdrr.io/github/MarioniLab/DropletUtils/) package[1].
 
-```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 8, fig.align='center'}
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
 plotCells(sc)
 sc_f <- selectCells(sc, min_size = 1e4, max_mito = 0.05)
 plotCells(sc_f)
@@ -133,18 +133,21 @@ plotMapping(sc_f)
 ```
 
 # Call peaks
-```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 12, fig.align='center'}
-sc <- selectPeaks(sc)
-plotPeaks(sc)
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
+sc_f <- selectPeaks(sc_f)
+plotPeaks(sc_f)
 ```
 
 # Feature selection
 ```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
 sc_f <- selectFeatures(sc_f)
-plotFeatures(sc)
+plotFeatures(sc_f)
 ```
 
-
+# Feature selection
+```{r, eval = FALSE}
+export(sc_f, outdir = tempdir())
+```
       
 # References
 [1]   

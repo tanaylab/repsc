@@ -95,11 +95,8 @@ compCounts <- function(bams,
   genes <- genes %>% select(id_unique, name, position_start, position_end)
   
   # import reads from bam file
-  reads <- Reputils::importBAM(bams, anchor = protocol, use_gcluster = use_gcluster, tag = 'NH')
+  reads <- Reputils::importBAM(bams, anchor = protocol, use_gcluster = use_gcluster, what = 'qname', tag = 'NH')
   reads <- reads[which(!is.na(barcode)), ]
-  
-  # remove duplicated read entries (can happen if neglected mate (2nd) maps to different positions). NH doesn't need to be adjusted
-  reads <- unique(reads)
   
   # add dummy meta column if none provided
   if (is.null(reads$meta))
@@ -162,7 +159,8 @@ compCounts <- function(bams,
   if (!is.na(bin_size))
   {
     message ("Binning positions")
-    hits <- hits[, pos_con := cut(pos_con, breaks = seq(-1e6, 1e6, by = bin_size), include.lowest = TRUE)] # use labels = FALSE might accelerate speed
+    bin_range <- seq(0, 1e6, by = bin_size)[which.min(abs(seq(0, 1e6, by = 25) - max(tes$position_start, tes$position_end, width(tes_3p), na.rm = TRUE)))]
+    hits      <- hits[, pos_con := cut(pos_con, breaks = seq(-bin_range, bin_range, by = bin_size), include.lowest = TRUE)] # use labels = FALSE might accelerate speed
   } else {
     hits[, pos_con := 1L]
   }

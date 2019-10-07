@@ -432,8 +432,9 @@ cpn <- function(scSet,
       }
             
       # bin and summarize counts
+      bin_range   <- seq(0, 1e6, by = bin_size)[which.min(abs(seq(0, 1e6, by = bin_size) - max(tes$position_start, tes$position_end, width(tes_flank), na.rm = TRUE)))]
       fam_bin_bps <- 
-        fam_bp_cpn[, pos_con := cut(pos_con, breaks = seq(-1e6, 1e6, by = bin_size), include.lowest = TRUE)
+        fam_bp_cpn[, pos_con := cut(pos_con, breaks = seq(-bin_range, bin_range, by = bin_size), include.lowest = TRUE)
           ][, .(bps = sum(cpn)), by = c('name', 'pos_con')] 
           
       # throw bins with 0 bp coverage (not present in curated TE universe)

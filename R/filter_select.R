@@ -386,6 +386,7 @@ selectPeaks <- function(scSet,
     return(scSet) 
   } else {
     message ('Define bin size when running "addCounts" function to allow peak calling')
+    return(scSet)
   }
 }
 

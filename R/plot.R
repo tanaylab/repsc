@@ -106,15 +106,15 @@ plotCorMat <- function(scSet,
     # dist_mat <- tgs_dist(cor_mat)
     # ki       <- sort(cutree(hclust(dist_mat, 'ward.D'), k = nclust))
     
-    cors_df  <- as.data.table(melt(cor_mat, varnames = c('id_unique', 'id_unique2'), value.name = 'cor')) 
+    cors_df  <- as.data.table(reshape2::melt(cor_mat, varnames = c('id_unique', 'id_unique2'), value.name = 'cor')) 
    
     # add cluster to long data.frame and reorder factor
     cors_df <- 
       merge(cors_df,
-            gstats[, .(id_unique = id_unique, row_clust = module)], all.x = TRUE, by = 'id_unique')[, id_unique := forcats::fct_reorder(id_unique, row_clust)]
+            gstats[, .(id_unique = id_unique, row_clust = module)], all.x = TRUE, by = 'id_unique', allow.cartesian = TRUE)[, id_unique := forcats::fct_reorder(id_unique, row_clust)]
     cors_df <- 
       merge(cors_df,
-            gstats[, .(id_unique2 = id_unique, col_clust = module)], all.x = TRUE, by = 'id_unique2')[, id_unique2 := forcats::fct_reorder(id_unique2, col_clust)]
+            gstats[, .(id_unique2 = id_unique, col_clust = module)], all.x = TRUE, by = 'id_unique2', allow.cartesian = TRUE)[, id_unique2 := forcats::fct_reorder(id_unique2, col_clust)]
   
     # add family annotation columns
     #cors_df <- merge(cors_df, unique(gstats[, c('id_unique', 'class')]), all.x = TRUE, by = 'id_unique')
@@ -372,7 +372,7 @@ plotTECov <- function(scSet,
   counts_aggr <- aggr(counts_te, min_expr = min_expr)
   
   # only retain expressed fams
-  cpn_df <- cpn_df[which(name %in% unique(counts_aggr$name)), ]
+  cpn_df <- cpn_df[which(name %fin% unique(counts_aggr$name)), ]
   
   # calc density
   con_signal <- 
@@ -919,7 +919,6 @@ plotMapping <- function(scSet,
 #' @export
 plotFeatures <- function(scSet)
 {
-  
   if (sum(dim(scSet@gstats)) > 0)
   {
     # features
@@ -1047,7 +1046,7 @@ plotUMIMat <- function(scSet)
   
   # convert to long and smooth
   counts_ds_f_smoo <- 
-    as.data.table(melt(mat_trans, varnames = c('id_unique', 'barcode'), value.name = 'n_ds'))[, rollmean := frollmean(n_ds, n = 15, fill = 0, align = "center")
+    as.data.table(reshape2::melt(mat_trans, varnames = c('id_unique', 'barcode'), value.name = 'n_ds'))[, rollmean := frollmean(n_ds, n = 15, fill = 0, align = "center")
     ][which(rollmean > 0), ]
     
   # add meta column

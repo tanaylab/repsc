@@ -10,6 +10,7 @@
                            axis.text.x = element_text(angle = 90, hjust = 1),
                            strip.text = element_text(size = 6, colour = "white", face = 'bold')))
   options(dplyr.width = 200)
+  options(tgs_use.blas = TRUE)
   options(future.globals.maxSize=100E9)
   options(width=200)
 }

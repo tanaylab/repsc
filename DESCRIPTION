@@ -33,7 +33,6 @@ Imports:
   ggridges,
   glue,
   gridExtra,
-  hdf5r,
   hexbin,
   igraph,
   kmer,
@@ -58,6 +57,7 @@ Remotes:
 RoxygenNote: 6.1.1
 Roxygen: list(markdown = TRUE)
 Suggests: 
+    hdf5r,
     knitr,
     rmarkdown,
     testthat

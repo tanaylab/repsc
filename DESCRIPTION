@@ -76,5 +76,4 @@ Collate:
     'plot.R'
     'transform.R'
     'utilities.R'
-    'wrapper.R'
     'zzz.R'

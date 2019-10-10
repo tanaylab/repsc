@@ -21,15 +21,19 @@ In this tutorial, we are going to utilize 5' scRNA-seq data on epigenetically de
 ## Getting started
 
 We start the workflow by loading Repsc and the human hg38 _BSgenome_ object into our R environment:
-```{r, eval = TRUE, echo = TRUE, warning = FALSE}
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, message = FALSE}
+Sys.time()
 library(Repsc)
-devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repdata/')
-
-# adjust to your genome of interest (e.g. BSgenome.Mmusculus.UCSC.mm10)
 library(BSgenome.Hsapiens.UCSC.hg38)
+
+# Repdata contains gene and TE annotation files, you can download and define those files manually (see below)
+devtools::load_all('/net/mraid14/export/tgdata/users/davidbr/src/Repdata/')
 ```
 
 ## Deduplicate Reads (parallel)
+
+We remove duplicated reads by creating artificial contigs along the chromosomes followed by deduplication with [UMI tools](https://github.com/CGATOxford/UMI-tools).
+
 ```{r, eval = FALSE, echo = TRUE, warning = FALSE}
 # path to BAM/SAM files containing mapped reads                         
 bam_paths <-  dir("~/tgdata/data/epitherapy_reanalyzed/aligned", full.names = TRUE, pattern = 'bam.bam$')
@@ -77,10 +81,10 @@ sc <- createScSet(genome   = Hsapiens,
                   genes    = gene_path)
 ```
 
-## Compute multiple sequence alignments
+## Create the input data.frame
 
-Repsc computes the read/UMI coverage along genes and the consensus model of TE families. This can be useful to sanity check 5'/3' enrichment (depending on the protocol) and to identify putative TE consensus TSSs (5' protocols), polyA-sites (3' protocols), and to distinguish true de-repression from spurious background signal (e.g. intronic TE read mis-assignment, broad-scale genomic background transcription, etc.). As a rough estimate, we can utilize the consensus mapping information from Repeatmasker or DFAM output files for that purpose. This will usually provide reasonable results for highly conserved families. To increase accuracy, Repsc can also compute family-wise multiple sequence alignments to improve mapping of individual loci onto a de novo alignment. When time and computational ressources are no limitation, we recommend this step by running:
-
+Here we define the input data
+ 
 ```{r, eval = TRUE, echo = TRUE, warning = FALSE}
 # path to bam files containing mapped reads                         
 bam_paths <-  dir("~/tgdata/data/epitherapy_reanalyzed/aligned/", 
@@ -100,7 +104,7 @@ input_df    <- data.frame(paths   = bam_paths,
                         paired  = TRUE,       # use FALSE for single-end libraries
                         mate    = 'first',    # only imports the first mate of properly aligned read pairs, set to NA when using single-end libraries
                         barcode = 'CB',       # 10x barcode included in BAM flag
-                        chunk   = chunkFiles(bam_paths, n_chunks = 12),
+                        chunk   = Reputils:::chunkFiles(bam_paths, n_chunks = 12),
                         #hdf5    = rep(hdf5_paths, each = 25),
                         meta    = rep(c('h1299_dacsb', 'h1299_dmso', 'hct116_dacsb', 'hct116_dmso'), each = 25),
                         stringsAsFactors = FALSE)
@@ -112,16 +116,8 @@ checkInput(input_df)
 sc <- addCounts(sc,
                 bams     = input_df,
                 bin_size = 25,
-                msa_dir  = NULL,
                 use_gcluster = TRUE)
 ```
-
-## resolve Overlaps
-
-
-
-
-
 
 ## Call cells
 
@@ -129,7 +125,7 @@ To distinguish real cells from empty droplets, we utilize the `emptyDrops` funct
 
 ```{r, eval = TRUE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
 plotCells(sc)
-sc_f <- selectCells(sc, min_size = 5e3, min_ribo = 0.01, max_mito = 0.4)
+sc_f <- selectCells(sc, min_size = 5000, max_mito = 0.05)
 plotCells(sc_f)
 ```
 
@@ -150,9 +146,9 @@ sc_f <- selectFeatures(sc_f, min_expr_third = 5)
 plotFeatures(sc_f)
 ```
 
-## Export
-```{r, eval = FALSE, echo = TRUE, warning = FALSE, fig.width = 7, fig.height = 7, fig.align='center'}
-export(sc_f, outdir = '~/tgdata/data/tmp/')
+# Export results
+```{r, eval = FALSE}
+export(sc_f, outdir = tempdir())
 ```
       
 # References

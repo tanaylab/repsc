@@ -21,7 +21,7 @@ In this tutorial, we are going to utilize 5' scRNA-seq data on mouse embryonic s
 ## Getting started
 
 We start the workflow by loading Repsc and the human hg38 _BSgenome_ object into our R environment:
-```{r, eval = TRUE, echo = FALSE, warning = FALSE}
+```{r, eval = TRUE, echo = TRUE, warning = FALSE, message = FALSE}
 Sys.time()
 library(Repsc)
 library(BSgenome.Mmusculus.UCSC.mm10)
@@ -143,7 +143,7 @@ sc_f <- selectFeatures(sc_f)
 plotFeatures(sc_f)
 ```
 
-# Feature selection
+# Export results
 ```{r, eval = FALSE}
 export(sc_f, outdir = tempdir())
 ```

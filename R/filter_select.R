@@ -205,8 +205,10 @@ selectFeatures <- function(scSet,
     
     # append family ds counts (careful, per cell umis are not equal afterwards!)
     counts_fam_ds <- 
-      counts_ds[, .(n_ds = sum(n_ds), n = sum(n)), by = c('name', 'type', 'barcode', 'id_unique', 'class')][which(type == 'te'), ][, type := 'te_fam']
-    counts_ds_comb <- rbindlist(list(counts_ds, counts_fam_ds), use.names = TRUE)
+      counts_ds[, .(n_ds = sum(n_ds), n = sum(n)), by = c('name', 'type', 'barcode', 'class')
+        ][which(type == 'te'), 
+          ][, ':=' (type = 'te_fam', id_unique = name)]
+    counts_ds_comb <- rbindlist(list(counts_ds, counts_fam_ds), use.names = TRUE, fill = TRUE)
     
     gstats <- varmean(counts_ds_comb, reg = reg, min_expr = min_expr)
   } else {
@@ -215,8 +217,10 @@ selectFeatures <- function(scSet,
     
     # recompute family ds counts based on counts_ds (for later feature selection)
     counts_fam_ds <- 
-      counts_ds[, .(n_ds = sum(n_ds), n = sum(n)), by = c('name', 'type', 'barcode', 'id_unique', 'class')][which(type == 'te'), ][, type := 'te_fam']
-    counts_ds_comb <- rbindlist(list(counts_ds, counts_fam_ds), use.names = TRUE)
+      counts_ds[, .(n_ds = sum(n_ds), n = sum(n)), by = c('name', 'type', 'barcode', 'class')
+        ][which(type == 'te'), 
+          ][, ':=' (type = 'te_fam', id_unique = name)]
+    counts_ds_comb <- rbindlist(list(counts_ds, counts_fam_ds), use.names = TRUE, fill = TRUE)
   }
     
   # select features
@@ -281,6 +285,8 @@ selectFeatures <- function(scSet,
   
   # add class anno
   scSet <- annoClass(scSet)
+  
+  scSet@params <- params_new
     
   return(scSet)
 }

@@ -189,6 +189,10 @@ addCounts <- function(scSet,
   # add class annotation
   scSet <- annoClass(scSet)
   
+  # set key for faster access
+  counts <- scSet@counts
+  scSet@counts <- setkey(counts, 'type', 'barcode')
+  
   scSet@cpn      <- cpn(scSet)
   scSet@cstats   <- cstats(scSet) # needs class annotation!
   scSet@mstats   <- mstats(scSet) # needs class annotation!

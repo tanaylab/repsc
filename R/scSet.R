@@ -76,7 +76,7 @@ setMethod(
       # Import 
       genes     <- rtracklayer::import(genes)
       GenomeInfoDb::seqlevelsStyle(genes) <- 'UCSC'
-      tes       <- Reputils::importRMSK(tes)
+      tes       <- Reputils::importTEs(tes)
       tss       <- Reputils::getTSS(genes) %>% select(gene_name)
       
       # Curate

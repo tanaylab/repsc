@@ -346,7 +346,7 @@ plotEnr <- function(scSet,
       ggplot(aes(factor(module, levels = as.character(sort(as.numeric(unique(ggdata_subs$module))))), name, fill = -log10(qval))) + 
         geom_raster() +
         geom_text(aes(label = inmodule, col = -log10(qval)), size = 2.25) + 
-        xlab('') + 
+        ylab('module') + 
         scale_fill_distiller(palette = 'BuPu', direction = 1) +
         scale_color_distiller(palette = 'PuRd', direction = -1) +
         theme(legend.position = 'none',

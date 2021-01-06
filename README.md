@@ -1,3 +1,5 @@
+# Important: this package is not maintained anymore
+
 
 # Repsc <img src="docs/reference/figures/logo.png" align="right" alt="" width="120" />
 
